@@ -54,3 +54,22 @@ test('unknown routes return a structured JSON error', async () => {
     },
   });
 });
+
+test('POST /api/chat rejects a missing message before calling Ollama', async () => {
+  const response = await fetch(`${baseUrl}/api/chat`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(body, {
+    error: {
+      code: 'INVALID_MESSAGE',
+      message: 'message must be a non-empty string',
+    },
+  });
+});

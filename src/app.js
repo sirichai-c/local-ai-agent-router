@@ -1,6 +1,7 @@
 const express = require('express');
 
 const healthRoutes = require('./routes/health.routes');
+const ollamaRoutes = require('./routes/ollama.routes');
 
 function createApp() {
   const app = express();
@@ -9,6 +10,7 @@ function createApp() {
   app.use(express.json({ limit: '1mb' }));
 
   app.use(healthRoutes);
+  app.use('/api', ollamaRoutes);
 
   app.use((request, response) => {
     response.status(404).json({
