@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 2 connects the Express foundation to a local Ollama runtime for model discovery, dependency health checks, and non-streaming chat with a configured Qwen model. Agent routing, isolated execution, evaluation, history, approvals, and sandboxing will be added incrementally in later phases.
+Phase 3 adds a local coding-agent registry alongside the Ollama integration. Agent routing, isolated execution, evaluation, history, approvals, and sandboxing will be added incrementally in later phases.
 
 ## Requirements
 
@@ -69,6 +69,20 @@ Sends one non-streaming user message to the configured model:
 
 The endpoint returns HTTP 400 for an invalid message, HTTP 503 when Ollama or the model is unavailable, HTTP 504 on timeout, and HTTP 502 for invalid or failed upstream responses.
 
+## Coding Agent Registry
+
+The registry describes OpenCode, Qwen Code, and Aider and checks the operating system `PATH` for their CLI commands. On Windows it uses `where.exe`; on Unix-like systems it falls back to `which`.
+
+This phase reports whether each CLI is installed and currently available. It does not execute agents, select an agent, score capabilities, or install missing software.
+
+### `GET /api/agents`
+
+Returns all registered agents with their metadata and detected executable state.
+
+### `GET /api/agents/:id`
+
+Returns one registered agent. Unknown IDs return HTTP 404.
+
 ## Current architecture
 
 ```text
@@ -87,6 +101,13 @@ Local Ollama HTTP API
 JSON response
 ```
 
+Agent discovery follows a separate branch of the same layered request flow:
+
+```text
+Agent route → Agent controller → Agent registry service
+    → Command detection utility → Operating system PATH
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -97,5 +118,6 @@ JSON response
 - Unknown routes return structured JSON rather than an HTML error page.
 - Ollama calls use fixed API paths, JSON bodies, and a request timeout.
 - Upstream network and HTTP failures are translated into safe structured errors.
+- Agent command detection uses argument arrays without shell command construction.
 
-This phase communicates only with the configured Ollama HTTP API. It does not execute coding agents or untrusted project code.
+This phase communicates with the configured Ollama HTTP API and inspects the local executable search path. It does not execute coding agents or untrusted project code.

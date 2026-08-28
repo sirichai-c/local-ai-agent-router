@@ -73,3 +73,13 @@ test('POST /api/chat rejects a missing message before calling Ollama', async () 
     },
   });
 });
+
+test('GET /api/agents/does-not-exist returns an agent-specific 404', async () => {
+  const response = await fetch(`${baseUrl}/api/agents/does-not-exist`);
+  const body = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(body, {
+    error: 'Agent not found',
+  });
+});
