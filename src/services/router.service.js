@@ -21,6 +21,8 @@ class RouterService {
       name: agent.name,
       installed: agent.installed,
       available: agent.available,
+      command: agent.command,
+      executablePath: agent.executablePath,
       score: scoring.score,
       reasons: scoring.reasons,
     };

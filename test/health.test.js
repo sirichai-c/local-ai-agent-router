@@ -107,3 +107,27 @@ test('POST /api/router/analyze requires a non-empty string task', async () => {
     });
   }
 });
+
+test('POST /api/router/plan requires task and workspace strings', async () => {
+  const invalidBodies = [
+    {},
+    { task: 'fix bug' },
+    { workspace: process.cwd() },
+    { task: 'fix bug', workspace: 42 },
+  ];
+
+  for (const body of invalidBodies) {
+    const response = await fetch(`${baseUrl}/api/router/plan`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: 'task and workspace are required',
+    });
+  }
+});
