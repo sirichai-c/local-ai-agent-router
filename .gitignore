@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Logs and test output
+*.log
+coverage/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Runtime data (introduced in later phases)
+data/*.db
+data/*.db-*
+
+# Temporary agent and sandbox state (introduced in later phases)
+.worktrees/
+.sandboxes/

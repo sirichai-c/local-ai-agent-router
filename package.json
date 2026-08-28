@@ -1,0 +1,29 @@
+{
+  "name": "local-ai-agent-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first orchestration backend for AI coding agents.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "node --test --test-isolation=none"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "ollama",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
