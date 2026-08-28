@@ -12,6 +12,7 @@ const testAgents = [
     commands: ['first', 'first-fallback'],
     description: 'First test agent',
     capabilities: ['coding'],
+    capabilityScores: { coding: 70 },
   },
   {
     id: 'missing-agent',
@@ -19,6 +20,7 @@ const testAgents = [
     commands: ['missing'],
     description: 'Missing test agent',
     capabilities: ['review'],
+    capabilityScores: { review: 80 },
   },
 ];
 
@@ -40,6 +42,7 @@ test('getAgents reports detected and missing commands without throwing', async (
       name: 'First Agent',
       description: 'First test agent',
       capabilities: ['coding'],
+      capabilityScores: { coding: 70 },
       installed: true,
       available: true,
       command: 'first-fallback',
@@ -50,6 +53,7 @@ test('getAgents reports detected and missing commands without throwing', async (
       name: 'Missing Agent',
       description: 'Missing test agent',
       capabilities: ['review'],
+      capabilityScores: { review: 80 },
       installed: false,
       available: false,
       command: null,

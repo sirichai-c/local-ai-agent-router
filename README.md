@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 3 adds a local coding-agent registry alongside the Ollama integration. Agent routing, isolated execution, evaluation, history, approvals, and sandboxing will be added incrementally in later phases.
+Phase 4 adds deterministic task classification and agent suitability scoring alongside the local registry and Ollama integration. Agent execution, isolated worktrees, evaluation, history, approvals, and sandboxing will be added incrementally in later phases.
 
 ## Requirements
 
@@ -83,6 +83,30 @@ Returns all registered agents with their metadata and detected executable state.
 
 Returns one registered agent. Unknown IDs return HTTP 404.
 
+## Task Routing
+
+```text
+Task → Rule-based classification → Agent capability scoring → Ranking
+```
+
+The classifier matches maintainable English and Thai keyword rules across ten task categories. If no rule matches, it applies a conservative `coding: 40` fallback so the result remains deterministic and useful.
+
+Capability numbers are initial heuristic routing priors, not objective benchmarks or official performance measurements. Historical performance will refine them in a later phase.
+
+`recommendedAgent` is the best theoretical match regardless of installation state. `selectedAgent` is the highest-scoring agent currently available on the local `PATH`, or `null` if none are available.
+
+### `POST /api/router/analyze`
+
+Accepts a JSON body such as:
+
+```json
+{
+  "task": "ช่วย refactor authentication service และตรวจ git diff ให้ด้วย"
+}
+```
+
+Returns category scores, the recommended and selected agents, a ranked list, and the strongest scoring reasons. Phase 4 only analyzes and ranks; it never executes an agent.
+
 ## Current architecture
 
 ```text
@@ -108,6 +132,13 @@ Agent route → Agent controller → Agent registry service
     → Command detection utility → Operating system PATH
 ```
 
+Task routing adds another deterministic service branch:
+
+```text
+Router route → Router controller → Router service
+    → Task classifier + Agent registry + Agent scorer
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -119,5 +150,6 @@ Agent route → Agent controller → Agent registry service
 - Ollama calls use fixed API paths, JSON bodies, and a request timeout.
 - Upstream network and HTTP failures are translated into safe structured errors.
 - Agent command detection uses argument arrays without shell command construction.
+- Task routing is local, deterministic, and does not call an LLM or external AI API.
 
-This phase communicates with the configured Ollama HTTP API and inspects the local executable search path. It does not execute coding agents or untrusted project code.
+Ollama remains available only for the explicit chat endpoints. The task router does not use it and does not execute coding agents or untrusted project code.

@@ -36,6 +36,7 @@ class AgentRegistryService {
       name: agent.name,
       description: agent.description,
       capabilities: [...agent.capabilities],
+      capabilityScores: { ...agent.capabilityScores },
       installed,
       available: installed,
       command,

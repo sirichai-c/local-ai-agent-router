@@ -83,3 +83,27 @@ test('GET /api/agents/does-not-exist returns an agent-specific 404', async () =>
     error: 'Agent not found',
   });
 });
+
+test('POST /api/router/analyze requires a non-empty string task', async () => {
+  const invalidBodies = [
+    {},
+    { task: '' },
+    { task: '   ' },
+    { task: 42 },
+  ];
+
+  for (const body of invalidBodies) {
+    const response = await fetch(`${baseUrl}/api/router/analyze`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: 'task is required',
+    });
+  }
+});
