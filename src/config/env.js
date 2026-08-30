@@ -7,6 +7,8 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 const DEFAULT_OLLAMA_MODEL = 'qwen3:8b';
 const DEFAULT_AGENT_PROCESS_TIMEOUT_MS = 600_000;
 const DEFAULT_AGENT_MAX_OUTPUT_BYTES = 1_048_576;
+const DEFAULT_EVALUATOR_MAX_CHANGED_FILES = 50;
+const DEFAULT_EVALUATOR_MAX_DIFF_BYTES = 524_288;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -89,6 +91,21 @@ const config = Object.freeze({
       'AGENT_MAX_OUTPUT_BYTES',
     ),
     worktreeRoot: parseOptionalPath(process.env.AGENT_WORKTREE_ROOT),
+  }),
+  evaluator: Object.freeze({
+    runProjectScripts: parseBoolean(
+      process.env.EVALUATOR_RUN_PROJECT_SCRIPTS,
+    ),
+    maxChangedFiles: parsePositiveInteger(
+      process.env.EVALUATOR_MAX_CHANGED_FILES,
+      DEFAULT_EVALUATOR_MAX_CHANGED_FILES,
+      'EVALUATOR_MAX_CHANGED_FILES',
+    ),
+    maxDiffBytes: parsePositiveInteger(
+      process.env.EVALUATOR_MAX_DIFF_BYTES,
+      DEFAULT_EVALUATOR_MAX_DIFF_BYTES,
+      'EVALUATOR_MAX_DIFF_BYTES',
+    ),
   }),
 });
 

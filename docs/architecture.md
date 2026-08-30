@@ -28,7 +28,8 @@ POST /api/tasks/execute
     → Task route → Task controller → Agent executor
     → Router → Execution gate → Git repository validation
     → Worktree service → Adapter → Safe process runner
-    → Agent changes → Git status + tracked diff
+    → Agent changes → Git status + tracked diff + untracked paths
+    → Evaluator service → Deterministic score and verdict
     → NO COMMIT / NO MERGE
 ```
 
@@ -78,7 +79,46 @@ No merge
 
 The executor validates the original repository before allocating a unique worktree. The adapter receives the worktree path as `cwd`, and the process runner accepts only known command basenames. Task text remains a single argument, `shell` is always disabled, and stdout/stderr share a bounded capture budget. Qwen Code adds its Docker sandbox and a task-local `QWEN_HOME`, so its file tools receive the worktree plus an empty runtime directory instead of the user's real Qwen profile. The container reaches Ollama on the Windows host through `host.docker.internal`; Ollama is not exposed to the LAN.
 
-After execution, the service reads worktree status, tracked diff, and `HEAD`. A changed `HEAD` is reported as an unexpected auto-commit and fails the execution result. Worktrees are deliberately retained because evaluation and human approval have not been implemented yet.
+After execution, the service reads worktree status, tracked diff, untracked paths, and `HEAD`. A changed `HEAD` is reported as an unexpected auto-commit and fails the execution result. The evaluator then produces independent evidence and a verdict. Worktrees are deliberately retained because human approval and cleanup have not been implemented yet.
+
+## Evaluator boundary
+
+```text
+Coding Agent
+    |
+    v
+Worktree Changes
+    |
+    v
+Evaluator Service
+    +-------------+-------------+-------------+
+    |             |             |             |
+    v             v             v             v
+Diff          Static        Project        Scoring
+Evaluator     Evaluator     Evaluator      Evaluator
+    |             |             |             |
+    +-------------+-------------+-------------+
+                         |
+                         v
+              pass / warning / fail
+```
+
+The diff evaluator counts both tracked and untracked files, measures only the tracked diff bytes, checks sensitive filenames, and rejects paths that resolve outside the worktree. Untracked contents are not represented as a unified patch, but supported untracked JavaScript and JSON files are still safely validated. If any sensitive path is detected, the API omits the raw tracked diff and Agent output and marks them as redacted.
+
+The static evaluator uses the allowlisted Node executable with `--check` for changed JavaScript and parses JSON as data. It skips deleted and unsupported files, refuses changed symbolic links, and never imports application modules.
+
+The project evaluator parses `package.json` and reports whether `test`, `lint`, and `build` scripts exist. Phase 7 never executes these Agent-controlled scripts on the host. `EVALUATOR_RUN_PROJECT_SCRIPTS=false` is the default, and host execution remains unavailable even when requested until the Phase 11A sandbox is implemented.
+
+The score evaluator begins at 100 and applies documented deterministic deductions. Critical sensitive paths, unsafe paths, timeouts, and unexpected commits are hard failures. Changed-file syntax failures also force a fail verdict. Skipped project scripts do not reduce the score.
+
+Execution status is mapped separately from the evaluator verdict:
+
+```text
+process success + pass      -> completed
+process success + warning   -> completed_with_warnings
+process success + fail      -> evaluation_failed
+process/timeout/commit fail -> failed
+```
 
 Git worktrees isolate repository state but do not sandbox the host process. A live Qwen Code run demonstrated this by writing a hallucinated absolute path outside the worktree; the artifact was removed and Qwen execution now uses its installed Docker sandbox. OpenCode and Aider remain host-backed in Phase 6, process-tree termination on Windows is best effort, and Phase 11 will introduce the generalized sandbox backend.
 

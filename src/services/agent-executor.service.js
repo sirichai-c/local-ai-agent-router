@@ -12,6 +12,27 @@ const {
 const { processRunnerService } = require('./process-runner.service');
 const { routerService } = require('./router.service');
 const { worktreeService } = require('./worktree.service');
+const { evaluatorService } = require('./evaluator.service');
+
+function mapExecutionStatus({ processResult, autoCommitDetected, verdict }) {
+  const processSucceeded = processResult.exitCode === 0
+    && !processResult.timedOut
+    && !autoCommitDetected;
+
+  if (!processSucceeded) {
+    return 'failed';
+  }
+
+  if (verdict === 'pass') {
+    return 'completed';
+  }
+
+  if (verdict === 'warning') {
+    return 'completed_with_warnings';
+  }
+
+  return 'evaluation_failed';
+}
 
 class AgentExecutorService {
   constructor({
@@ -21,6 +42,7 @@ class AgentExecutorService {
     git = gitService,
     worktrees = worktreeService,
     runner = processRunnerService,
+    evaluator = evaluatorService,
     executionEnabled = config.agentExecution.enabled,
     model = config.ollama.model,
     ollamaBaseUrl = config.ollama.baseUrl,
@@ -32,6 +54,7 @@ class AgentExecutorService {
     this.git = git;
     this.worktrees = worktrees;
     this.runner = runner;
+    this.evaluator = evaluator;
     this.executionEnabled = executionEnabled;
     this.model = model;
     this.ollamaBaseUrl = ollamaBaseUrl;
@@ -135,18 +158,33 @@ class AgentExecutorService {
     const startedAt = this.clock();
     const processResult = await this.runner.runProcess(invocation);
     const finishedAt = this.clock();
-    const [worktreeHead, changedFiles, diff] = await Promise.all([
+    const [worktreeHead, changedFiles, diff, untrackedFiles] = await Promise.all([
       this.git.getHeadCommit(worktree.worktreePath),
       this.git.getChangedFiles(worktree.worktreePath),
       this.git.getDiff(worktree.worktreePath),
+      this.git.getUntrackedFiles(worktree.worktreePath),
     ]);
     const autoCommitDetected = worktreeHead !== repository.baseCommit;
-    const executionSucceeded = processResult.exitCode === 0
-      && !processResult.timedOut
-      && !autoCommitDetected;
+    const evaluation = await this.evaluator.evaluateAgentResult({
+      workspace: worktree.worktreePath,
+      execution: processResult,
+      baseCommit: repository.baseCommit,
+      changedFiles,
+      trackedDiff: diff,
+      untrackedFiles,
+      unexpectedCommit: autoCommitDetected,
+    });
+    const status = mapExecutionStatus({
+      processResult,
+      autoCommitDetected,
+      verdict: evaluation.verdict,
+    });
+    const sensitiveDiffRedacted = (
+      evaluation.diff?.sensitiveFiles?.length || 0
+    ) > 0;
 
     return {
-      status: executionSucceeded ? 'completed' : 'failed',
+      status,
       taskId: worktree.taskId,
       selectedAgent: analysis.selectedAgent,
       classification: analysis.classification,
@@ -169,16 +207,20 @@ class AgentExecutorService {
         exitCode: processResult.exitCode,
         timedOut: processResult.timedOut,
         outputTruncated: processResult.outputTruncated,
-        stdout: processResult.stdout,
-        stderr: processResult.stderr,
+        stdout: sensitiveDiffRedacted ? null : processResult.stdout,
+        stderr: sensitiveDiffRedacted ? null : processResult.stderr,
+        outputRedacted: sensitiveDiffRedacted,
         error: processResult.error,
       },
       changes: {
-        count: changedFiles.length,
+        count: evaluation.summary.changedFileCount,
         files: changedFiles,
-        diff,
+        untrackedFiles,
+        diff: sensitiveDiffRedacted ? null : diff,
+        diffRedacted: sensitiveDiffRedacted,
         autoCommitDetected,
       },
+      evaluation,
     };
   }
 }
@@ -190,4 +232,5 @@ module.exports = {
   RepositoryValidationError,
   WorkspaceValidationError,
   agentExecutorService,
+  mapExecutionStatus,
 };

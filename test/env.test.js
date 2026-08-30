@@ -2,10 +2,17 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const {
+  config,
   parseBoolean,
   parseOptionalPath,
   parsePositiveInteger,
 } = require('../src/config/env');
+
+test('evaluator defaults keep project scripts disabled and limits bounded', () => {
+  assert.equal(config.evaluator.runProjectScripts, false);
+  assert.equal(config.evaluator.maxChangedFiles, 50);
+  assert.equal(config.evaluator.maxDiffBytes, 524_288);
+});
 
 test('execution gate enables only for the exact true value', () => {
   assert.equal(parseBoolean('true'), true);

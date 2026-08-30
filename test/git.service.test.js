@@ -7,6 +7,7 @@ const { after, before, test } = require('node:test');
 const {
   GitService,
   parseChangedFiles,
+  parseNullDelimitedPaths,
 } = require('../src/services/git.service');
 
 const git = new GitService();
@@ -54,14 +55,34 @@ test('Git service returns tracked and untracked changes without hiding status', 
 
   const changedFiles = await git.getChangedFiles(repo);
   const diff = await git.getDiff(repo);
+  const untrackedFiles = await git.getUntrackedFiles(repo);
 
   assert.deepEqual(changedFiles, [
     { status: ' M', file: 'README.md' },
-    { status: '??', file: '"untracked file.txt"' },
+    { status: '??', file: 'untracked file.txt' },
   ]);
+  assert.deepEqual(untrackedFiles, ['untracked file.txt']);
   assert.match(diff, /\+Changed/);
   assert.doesNotMatch(diff, /untracked file/);
   assert.equal(await git.isClean(repo), false);
+});
+
+test('parseChangedFiles handles NUL-delimited rename records safely', () => {
+  assert.deepEqual(parseChangedFiles('R  new name.js\0old name.js\0?? untracked.js\0'), [
+    {
+      status: 'R ',
+      file: 'new name.js',
+      originalFile: 'old name.js',
+    },
+    { status: '??', file: 'untracked.js' },
+  ]);
+});
+
+test('parseNullDelimitedPaths preserves spaces without Git quoting', () => {
+  assert.deepEqual(
+    parseNullDelimitedPaths('one file.js\0nested/two.json\0'),
+    ['one file.js', 'nested/two.json'],
+  );
 });
 
 test('parseChangedFiles preserves the two-column porcelain status', () => {

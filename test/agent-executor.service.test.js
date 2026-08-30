@@ -43,6 +43,7 @@ function createService(overrides = {}) {
     isClean: async () => true,
     getChangedFiles: async () => [{ status: ' M', file: 'README.md' }],
     getDiff: async () => 'diff --git a/README.md b/README.md',
+    getUntrackedFiles: async () => [],
     ...gitOverrides,
   };
 
@@ -78,8 +79,15 @@ function createService(overrides = {}) {
         error: null,
       }),
     },
+    evaluator: {
+      evaluateAgentResult: async () => ({
+        score: 100,
+        verdict: 'pass',
+        summary: { changedFileCount: 1 },
+      }),
+    },
     executionEnabled: true,
-    model: 'qwen3.5:4b',
+    model: 'qwen3:8b',
     ollamaBaseUrl: 'http://localhost:11434',
     clock: (() => {
       const times = [
@@ -213,6 +221,7 @@ test('agent invocation cwd is always the isolated worktree', async () => {
   assert.notEqual(result.execution.cwd, repo);
   assert.equal(result.execution.durationMs, 1_250);
   assert.equal(result.changes.files[0].file, 'README.md');
+  assert.equal(result.evaluation.verdict, 'pass');
 });
 
 test('unexpected agent commit marks the result as failed', async () => {
@@ -229,4 +238,106 @@ test('unexpected agent commit marks the result as failed', async () => {
   assert.equal(result.status, 'failed');
   assert.equal(result.changes.autoCommitDetected, true);
   assert.notEqual(result.workspace.headCommit, result.workspace.baseCommit);
+});
+
+test('warning verdict maps successful execution to completed_with_warnings', async () => {
+  const service = createService({
+    evaluator: {
+      evaluateAgentResult: async () => ({
+        score: 80,
+        verdict: 'warning',
+        summary: { changedFileCount: 1 },
+      }),
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'completed_with_warnings');
+});
+
+test('fail verdict maps successful execution to evaluation_failed', async () => {
+  const service = createService({
+    evaluator: {
+      evaluateAgentResult: async () => ({
+        score: 50,
+        verdict: 'fail',
+        summary: { changedFileCount: 1 },
+      }),
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'evaluation_failed');
+});
+
+test('agent process failure remains failed regardless of evaluator verdict', async () => {
+  const service = createService({
+    runner: {
+      runProcess: async (invocation) => ({
+        ...invocation,
+        exitCode: 1,
+        timedOut: false,
+        outputTruncated: false,
+        stdout: '',
+        stderr: 'failed',
+        error: null,
+      }),
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'failed');
+});
+
+test('executor passes explicit untracked files to the evaluator', async () => {
+  let evaluationInput;
+  const service = createService({
+    git: {
+      getChangedFiles: async () => [{ status: '??', file: 'new-file.js' }],
+      getUntrackedFiles: async () => ['new-file.js'],
+      getDiff: async () => '',
+    },
+    evaluator: {
+      evaluateAgentResult: async (input) => {
+        evaluationInput = input;
+        return {
+          score: 100,
+          verdict: 'pass',
+          summary: { changedFileCount: 1 },
+        };
+      },
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.deepEqual(evaluationInput.untrackedFiles, ['new-file.js']);
+  assert.equal(result.changes.untrackedFiles[0], 'new-file.js');
+});
+
+test('executor redacts tracked diff when evaluation detects a sensitive path', async () => {
+  const service = createService({
+    evaluator: {
+      evaluateAgentResult: async () => ({
+        score: 50,
+        verdict: 'fail',
+        summary: { changedFileCount: 1 },
+        diff: {
+          sensitiveFiles: [{ path: '.env', rule: 'dotenv-file' }],
+        },
+      }),
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'evaluation_failed');
+  assert.equal(result.changes.diff, null);
+  assert.equal(result.changes.diffRedacted, true);
+  assert.equal(result.execution.stdout, null);
+  assert.equal(result.execution.stderr, null);
+  assert.equal(result.execution.outputRedacted, true);
 });

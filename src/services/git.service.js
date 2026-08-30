@@ -21,6 +21,34 @@ class RepositoryValidationError extends Error {
 }
 
 function parseChangedFiles(statusOutput) {
+  if (statusOutput.includes('\0')) {
+    const records = statusOutput.split('\0');
+    const changes = [];
+
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+
+      if (!record) {
+        continue;
+      }
+
+      const status = record.slice(0, 2);
+      const change = {
+        status,
+        file: record.length > 3 ? record.slice(3) : '',
+      };
+
+      if (status.includes('R') || status.includes('C')) {
+        change.originalFile = records[index + 1] || '';
+        index += 1;
+      }
+
+      changes.push(change);
+    }
+
+    return changes;
+  }
+
   return statusOutput
     .split(/\r?\n/)
     .filter(Boolean)
@@ -28,6 +56,13 @@ function parseChangedFiles(statusOutput) {
       status: line.slice(0, 2),
       file: line.length > 3 ? line.slice(3) : '',
     }));
+}
+
+function parseNullDelimitedPaths(output) {
+  return output
+    .split('\0')
+    .filter(Boolean)
+    .map((filePath) => filePath.replace(/\\/gu, '/'));
 }
 
 class GitService {
@@ -106,7 +141,19 @@ class GitService {
   }
 
   async getChangedFiles(repo) {
-    return parseChangedFiles(await this.getStatus(repo));
+    const result = await this.runGit(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      repo,
+    );
+    return parseChangedFiles(result.stdout);
+  }
+
+  async getUntrackedFiles(repo) {
+    const result = await this.runGit(
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      repo,
+    );
+    return parseNullDelimitedPaths(result.stdout);
   }
 
   async branchExists(repo, branch) {
@@ -143,4 +190,5 @@ module.exports = {
   RepositoryValidationError,
   gitService,
   parseChangedFiles,
+  parseNullDelimitedPaths,
 };
