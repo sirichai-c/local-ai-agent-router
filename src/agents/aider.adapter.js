@@ -8,8 +8,23 @@ class AiderAdapter extends BaseAgentAdapter {
     });
   }
 
-  buildInvocation({ task, workspace, model, command, ollamaBaseUrl }) {
-    const input = this.validateInvocationInput({ task, workspace, model, command });
+  buildInvocation({
+    task,
+    workspace,
+    model,
+    command,
+    executionCommand,
+    executionArgs,
+    ollamaBaseUrl,
+  }) {
+    const input = this.validateInvocationInput({
+      task,
+      workspace,
+      model,
+      command,
+      executionCommand,
+      executionArgs,
+    });
 
     if (typeof ollamaBaseUrl !== 'string' || ollamaBaseUrl.trim() === '') {
       throw new TypeError('ollamaBaseUrl must be a non-empty string');
@@ -18,6 +33,7 @@ class AiderAdapter extends BaseAgentAdapter {
     return {
       command: input.command,
       args: [
+        ...input.executionArgs,
         '--model',
         `ollama_chat/${input.model}`,
         '--message',

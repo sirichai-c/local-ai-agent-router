@@ -22,4 +22,5 @@ data/*.db-*
 
 # Temporary agent and sandbox state (introduced in later phases)
 .worktrees/
+.agent-worktrees/
 .sandboxes/

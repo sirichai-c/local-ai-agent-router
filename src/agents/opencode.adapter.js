@@ -13,8 +13,23 @@ class OpenCodeAdapter extends BaseAgentAdapter {
     });
   }
 
-  buildInvocation({ task, workspace, model, command, ollamaBaseUrl }) {
-    const input = this.validateInvocationInput({ task, workspace, model, command });
+  buildInvocation({
+    task,
+    workspace,
+    model,
+    command,
+    executionCommand,
+    executionArgs,
+    ollamaBaseUrl,
+  }) {
+    const input = this.validateInvocationInput({
+      task,
+      workspace,
+      model,
+      command,
+      executionCommand,
+      executionArgs,
+    });
 
     if (typeof ollamaBaseUrl !== 'string' || ollamaBaseUrl.trim() === '') {
       throw new TypeError('ollamaBaseUrl must be a non-empty string');
@@ -32,6 +47,9 @@ class OpenCodeAdapter extends BaseAgentAdapter {
           models: {
             [input.model]: {
               name: input.model,
+              reasoning: true,
+              tool_call: true,
+              interleaved: 'reasoning',
             },
           },
         },
@@ -41,6 +59,7 @@ class OpenCodeAdapter extends BaseAgentAdapter {
     return {
       command: input.command,
       args: [
+        ...input.executionArgs,
         'run',
         '--model',
         providerModel,

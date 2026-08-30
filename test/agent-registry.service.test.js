@@ -32,6 +32,7 @@ test('getAgents reports detected and missing commands without throwing', async (
       path: command === 'first-fallback' ? '/tools/first-fallback' : null,
       paths: [],
     }),
+    executionCommandResolver: async (agent, detection) => detection.path,
   });
 
   const agents = await service.getAgents();
@@ -47,6 +48,8 @@ test('getAgents reports detected and missing commands without throwing', async (
       available: true,
       command: 'first-fallback',
       executablePath: '/tools/first-fallback',
+      executionCommand: '/tools/first-fallback',
+      executionArgs: [],
     },
     {
       id: 'missing-agent',
@@ -58,6 +61,8 @@ test('getAgents reports detected and missing commands without throwing', async (
       available: false,
       command: null,
       executablePath: null,
+      executionCommand: null,
+      executionArgs: [],
     },
   ]);
 });
@@ -74,12 +79,32 @@ test('getAgentById stops after the first available command', async () => {
         paths: [`/tools/${command}`],
       };
     },
+    executionCommandResolver: async (agent, detection) => detection.path,
   });
 
   const agent = await service.getAgentById('first-agent');
 
   assert.equal(agent.command, 'first');
   assert.deepEqual(inspectedCommands, ['first']);
+});
+
+test('installed Windows shim is unavailable without a spawn-safe executable', async () => {
+  const service = new AgentRegistryService({
+    agents: testAgents,
+    commandDetector: async () => ({
+      exists: true,
+      path: 'C:\\tools\\first.cmd',
+      paths: ['C:\\tools\\first.cmd'],
+    }),
+    executionCommandResolver: async () => null,
+  });
+
+  const agent = await service.getAgentById('first-agent');
+
+  assert.equal(agent.installed, true);
+  assert.equal(agent.available, false);
+  assert.equal(agent.executionCommand, null);
+  assert.deepEqual(agent.executionArgs, []);
 });
 
 test('getAgentById returns null for an unknown id without inspecting PATH', async () => {

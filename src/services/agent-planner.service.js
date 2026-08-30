@@ -101,11 +101,17 @@ class AgentPlannerService {
       throw new Error(`No detected command available for ${analysis.selectedAgent.id}`);
     }
 
+    if (!analysis.selectedAgent.executionCommand) {
+      throw new Error(`No executable command available for ${analysis.selectedAgent.id}`);
+    }
+
     const invocation = adapter.buildInvocation({
       task: analysis.task,
       workspace: resolvedWorkspace,
       model: this.model,
       command: analysis.selectedAgent.command,
+      executionCommand: analysis.selectedAgent.executionCommand,
+      executionArgs: analysis.selectedAgent.executionArgs,
       ollamaBaseUrl: this.ollamaBaseUrl,
     });
 

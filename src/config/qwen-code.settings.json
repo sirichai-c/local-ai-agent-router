@@ -1,0 +1,61 @@
+{
+  "model": {
+    "generationConfig": {
+      "timeout": 300000,
+      "streamIdleTimeoutMs": 300000,
+      "contextWindowSize": 4096,
+      "extra_body": {
+        "reasoning_effort": "none"
+      },
+      "samplingParams": {
+        "temperature": 0,
+        "max_tokens": 768
+      }
+    },
+    "maxToolCalls": 8
+  },
+  "permissions": {
+    "deny": [
+      "Agent",
+      "task",
+      "todo_write",
+      "run_shell_command",
+      "web_fetch",
+      "grep_search",
+      "glob",
+      "list_directory",
+      "read_mcp_resource",
+      "skill",
+      "tool_search",
+      "notebook_edit",
+      "cron_create",
+      "cron_list",
+      "cron_delete",
+      "get_goal",
+      "update_goal",
+      "list_agents",
+      "task_stop",
+      "loop_wakeup",
+      "record_artifact",
+      "send_message",
+      "report_findings",
+      "enter_worktree",
+      "exit_worktree",
+      "zoom_image"
+    ]
+  },
+  "memory": {
+    "enableManagedAutoMemory": false,
+    "enableManagedAutoDream": false,
+    "enableAutoSkill": false
+  },
+  "tools": {
+    "sandbox": "docker",
+    "visible": [
+      "read_file",
+      "write_file",
+      "edit"
+    ]
+  },
+  "$version": 4
+}

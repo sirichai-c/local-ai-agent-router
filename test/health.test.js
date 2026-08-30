@@ -131,3 +131,18 @@ test('POST /api/router/plan requires task and workspace strings', async () => {
     });
   }
 });
+
+test('POST /api/tasks/execute requires task and workspace strings', async () => {
+  const response = await fetch(`${baseUrl}/api/tasks/execute`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: 'task and workspace are required',
+  });
+});

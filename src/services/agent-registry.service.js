@@ -1,13 +1,18 @@
 const agentDefinitions = require('../config/agents');
 const { findCommand } = require('../utils/command.util');
+const {
+  resolveExecutionCommand,
+} = require('../utils/execution-command.util');
 
 class AgentRegistryService {
   constructor({
     agents = agentDefinitions,
     commandDetector = findCommand,
+    executionCommandResolver = resolveExecutionCommand,
   } = {}) {
     this.agents = agents;
     this.commandDetector = commandDetector;
+    this.executionCommandResolver = executionCommandResolver;
   }
 
   async detectAgent(agent) {
@@ -15,10 +20,23 @@ class AgentRegistryService {
       const detection = await this.commandDetector(command);
 
       if (detection.exists) {
+        const execution = await this.executionCommandResolver(
+          agent,
+          detection,
+        );
+        const executionCommand = typeof execution === 'string'
+          ? execution
+          : execution?.command || null;
+        const executionArgs = typeof execution === 'string'
+          ? []
+          : execution?.args || [];
+
         return this.toRegistryEntry(agent, {
           installed: true,
           command,
           executablePath: detection.path,
+          executionCommand,
+          executionArgs,
         });
       }
     }
@@ -27,10 +45,18 @@ class AgentRegistryService {
       installed: false,
       command: null,
       executablePath: null,
+      executionCommand: null,
+      executionArgs: [],
     });
   }
 
-  toRegistryEntry(agent, { installed, command, executablePath }) {
+  toRegistryEntry(agent, {
+    installed,
+    command,
+    executablePath,
+    executionCommand,
+    executionArgs,
+  }) {
     return {
       id: agent.id,
       name: agent.name,
@@ -38,9 +64,11 @@ class AgentRegistryService {
       capabilities: [...agent.capabilities],
       capabilityScores: { ...agent.capabilityScores },
       installed,
-      available: installed,
+      available: installed && Boolean(executionCommand),
       command,
       executablePath,
+      executionCommand,
+      executionArgs: [...executionArgs],
     };
   }
 

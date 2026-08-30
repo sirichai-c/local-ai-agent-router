@@ -12,6 +12,12 @@ function createRouter(availableAgentIds = ['opencode']) {
     capabilityScores: { ...agent.capabilityScores },
     installed: availableIds.has(agent.id),
     available: availableIds.has(agent.id),
+    command: availableIds.has(agent.id) ? agent.commands[0] : null,
+    executablePath: availableIds.has(agent.id) ? `/tools/${agent.commands[0]}` : null,
+    executionCommand: availableIds.has(agent.id)
+      ? `/tools/${agent.commands[0]}`
+      : null,
+    executionArgs: [],
   }));
 
   return new RouterService({

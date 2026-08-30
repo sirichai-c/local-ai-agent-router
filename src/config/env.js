@@ -4,7 +4,9 @@ dotenv.config({ quiet: true });
 
 const DEFAULT_PORT = 3000;
 const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
-const DEFAULT_OLLAMA_MODEL = 'qwen3.5:4b';
+const DEFAULT_OLLAMA_MODEL = 'qwen3:8b';
+const DEFAULT_AGENT_PROCESS_TIMEOUT_MS = 600_000;
+const DEFAULT_AGENT_MAX_OUTPUT_BYTES = 1_048_576;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -41,6 +43,32 @@ function parseModel(value) {
   return value?.trim() || DEFAULT_OLLAMA_MODEL;
 }
 
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+
+  return value === 'true';
+}
+
+function parsePositiveInteger(value, defaultValue, variableName) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isSafeInteger(parsedValue) || parsedValue < 1) {
+    throw new Error(`${variableName} must be a positive integer`);
+  }
+
+  return parsedValue;
+}
+
+function parseOptionalPath(value) {
+  return value?.trim() || null;
+}
+
 const config = Object.freeze({
   port: parsePort(process.env.PORT),
   serviceName: 'local-ai-agent-router',
@@ -48,6 +76,28 @@ const config = Object.freeze({
     baseUrl: parseBaseUrl(process.env.OLLAMA_BASE_URL),
     model: parseModel(process.env.OLLAMA_MODEL),
   }),
+  agentExecution: Object.freeze({
+    enabled: parseBoolean(process.env.AGENT_EXECUTION_ENABLED),
+    timeoutMs: parsePositiveInteger(
+      process.env.AGENT_PROCESS_TIMEOUT_MS,
+      DEFAULT_AGENT_PROCESS_TIMEOUT_MS,
+      'AGENT_PROCESS_TIMEOUT_MS',
+    ),
+    maxOutputBytes: parsePositiveInteger(
+      process.env.AGENT_MAX_OUTPUT_BYTES,
+      DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+      'AGENT_MAX_OUTPUT_BYTES',
+    ),
+    worktreeRoot: parseOptionalPath(process.env.AGENT_WORKTREE_ROOT),
+  }),
 });
 
-module.exports = { config, parseBaseUrl, parseModel, parsePort };
+module.exports = {
+  config,
+  parseBaseUrl,
+  parseBoolean,
+  parseModel,
+  parseOptionalPath,
+  parsePort,
+  parsePositiveInteger,
+};

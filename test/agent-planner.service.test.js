@@ -28,6 +28,8 @@ function createAnalysis({ selectedAgent = true } = {}) {
         name: 'OpenCode',
         available: true,
         command: 'opencode',
+        executionCommand: 'C:\\tools\\opencode.exe',
+        executionArgs: [],
         score: 82,
       }
       : null,
@@ -48,7 +50,7 @@ test('planner uses selectedAgent rather than recommendedAgent', async () => {
         buildInvocation: (input) => {
           invocationInput = input;
           return {
-            command: input.command,
+            command: input.executionCommand,
             args: [input.task],
             cwd: input.workspace,
             env: {},
@@ -69,6 +71,8 @@ test('planner uses selectedAgent rather than recommendedAgent', async () => {
   assert.equal(resolvedAdapterId, 'opencode');
   assert.equal(result.selectedAgent.id, 'opencode');
   assert.equal(invocationInput.command, 'opencode');
+  assert.equal(invocationInput.executionCommand, 'C:\\tools\\opencode.exe');
+  assert.deepEqual(invocationInput.executionArgs, []);
   assert.equal(invocationInput.workspace, path.resolve(process.cwd()));
 });
 

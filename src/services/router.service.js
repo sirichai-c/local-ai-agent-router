@@ -23,6 +23,8 @@ class RouterService {
       available: agent.available,
       command: agent.command,
       executablePath: agent.executablePath,
+      executionCommand: agent.executionCommand,
+      executionArgs: [...(agent.executionArgs || [])],
       score: scoring.score,
       reasons: scoring.reasons,
     };

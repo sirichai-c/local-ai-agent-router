@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 5 adds coding-agent adapters and a read-only execution planner alongside deterministic routing, the local registry, and Ollama integration. Agent execution, isolated worktrees, evaluation, history, approvals, and sandboxing will be added incrementally in later phases.
+Phase 6 adds gated coding-agent execution inside isolated Git worktrees. Qwen Code also uses its verified Docker sandbox after live validation demonstrated that a worktree alone cannot confine host filesystem writes. Evaluation, competition, history, approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ Phase 5 adds coding-agent adapters and a read-only execution planner alongside d
 - npm
 - Git
 - Ollama 0.33 or a compatible version
-- The configured local model (default: `qwen3.5:4b`)
+- The configured local model (default: `qwen3:8b`)
 
 ## Setup
 
@@ -27,7 +27,16 @@ Phase 2 configuration:
 ```dotenv
 PORT=3000
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3.5:4b
+OLLAMA_MODEL=qwen3:8b
+```
+
+Agent execution remains disabled unless it is explicitly enabled:
+
+```dotenv
+AGENT_EXECUTION_ENABLED=false
+AGENT_PROCESS_TIMEOUT_MS=600000
+AGENT_MAX_OUTPUT_BYTES=1048576
+AGENT_WORKTREE_ROOT=
 ```
 
 ## Commands
@@ -73,7 +82,7 @@ The endpoint returns HTTP 400 for an invalid message, HTTP 503 when Ollama or th
 
 The registry describes OpenCode, Qwen Code, and Aider and checks the operating system `PATH` for their CLI commands. On Windows it uses `where.exe`; on Unix-like systems it falls back to `which`.
 
-This phase reports whether each CLI is installed and currently available. It does not execute agents, select an agent, score capabilities, or install missing software.
+`installed` means a CLI was found on `PATH`. `available` additionally means the platform has a spawn-safe executable. On Windows, npm `.cmd` shims are not executed through a shell; OpenCode resolves to its verified native `opencode.exe` instead. Missing software is never installed automatically.
 
 ### `GET /api/agents`
 
@@ -118,12 +127,12 @@ Adapters translate the router's common task, workspace, and model inputs into ea
 | Agent | Adapter | Syntax source |
 |---|---|---|
 | OpenCode | `OpenCodeAdapter` | Locally verified with OpenCode 1.18.23 |
-| Qwen Code | `QwenCodeAdapter` | Current official documentation; CLI not installed locally |
+| Qwen Code | `QwenCodeAdapter` | Locally verified with Qwen Code 0.22.3 |
 | Aider | `AiderAdapter` | Current official documentation; CLI not installed locally |
 
-OpenCode uses `run`, JSON output, and the `provider/model` form verified by its local help. Because this environment has no global OpenCode Ollama provider, its plan supplies non-secret inline provider configuration pointing to Ollama's OpenAI-compatible `/v1` endpoint. It does not enable OpenCode's automatic permission approval option.
+OpenCode uses `run`, JSON output, and the `provider/model` form verified by its local help. Because this environment has no global OpenCode Ollama provider, its plan supplies non-secret inline provider configuration pointing to Ollama's OpenAI-compatible `/v1` endpoint and declares the model's verified reasoning/tool-call capabilities. It does not enable OpenCode's automatic permission approval option.
 
-Qwen Code requires local provider configuration in its settings before a generated plan can use Ollama. Aider uses the documented `ollama_chat/` model prefix and disables automatic Git commits.
+Qwen Code 0.22.3 uses its verified OpenAI-compatible provider flags with Ollama. Its adapter enables the installed Docker sandbox, maps Windows worktree paths to the container's verified `/c/...` form, reaches host Ollama through `host.docker.internal`, disables Qwen 3 thinking with Ollama's supported `reasoning_effort: "none"`, and redirects `QWEN_HOME` to a task-local runtime directory so the container does not mount the user's real Qwen credentials. Aider uses the documented `ollama_chat/` model prefix and disables automatic Git commits.
 
 ### `POST /api/router/plan`
 
@@ -138,7 +147,31 @@ Accepts a task and an existing workspace directory:
 
 The endpoint validates the workspace, asks the deterministic router for the best available agent, and returns an invocation plan. If no agent is available, it returns `status: "no_available_agent"` with `invocation: null`.
 
-**Phase 5 does not execute coding agents or modify the supplied workspace. Execution begins in Phase 6.**
+The planner remains read-only. Agent execution is available only through the separately gated task endpoint below.
+
+## Agent Execution
+
+```text
+Task -> Router -> Selected agent -> Git worktree -> Agent execution -> Changes
+```
+
+### `POST /api/tasks/execute`
+
+Accepts the same `task` and `workspace` fields as the planning endpoint. Before execution, the service requires all of the following:
+
+- `AGENT_EXECUTION_ENABLED=true`
+- an available spawn-safe agent executable
+- an existing Git repository with a valid attached `HEAD`
+- a clean target working tree
+- a unique branch and worktree outside the original repository
+
+The default gate is `false`. A disabled request returns `status: "execution_disabled"` and does not inspect Git, create a worktree, or start an agent.
+
+For enabled requests, the service captures the target branch and base commit, creates `agent/<task-id>-<agent-id>`, and runs the selected adapter with the new worktree as its `cwd`. Standard output and error are captured with a combined byte limit, and execution has a configurable timeout. Qwen Code additionally runs file tools in its Docker sandbox; its first run may pull the sandbox image bundled for the installed CLI version.
+
+The original repository is never checked out, reset, committed, or merged by this flow. Candidate changes and their worktree remain available for later evaluation and human review. An unexpected agent-created commit is detected by comparing worktree `HEAD` with `baseCommit` and marks the result as failed.
+
+`changedFiles` includes tracked and untracked status entries. The baseline `git diff HEAD` output covers tracked changes but does not contain untracked file content; full candidate representation is planned for Phase 8.
 
 ## Current architecture
 
@@ -180,6 +213,15 @@ POST /api/router/plan → Router controller → Agent planner
     → Agent-specific invocation plan → NO EXECUTION
 ```
 
+Execution uses an isolated source-control branch:
+
+```text
+POST /api/tasks/execute -> Task controller -> Agent executor
+    -> Router -> Execution gate -> Git validation
+    -> External worktree -> Adapter -> Safe process runner
+    -> Worktree status and tracked diff -> NO COMMIT / NO MERGE
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -194,5 +236,11 @@ POST /api/router/plan → Router controller → Agent planner
 - Task routing is local, deterministic, and does not call an LLM or external AI API.
 - Planner inputs cannot supply commands; adapters accept only known registry commands.
 - User task text remains one argument element and is never assembled into a shell string.
+- The process runner uses a command allowlist and `spawn` with `shell: false`.
+- Execution has a timeout and a combined stdout/stderr memory limit.
+- Agent `cwd` is always the isolated worktree, never the original repository.
+- Dirty repositories and detached `HEAD` states are rejected without automatic stash or commit.
 
-Ollama remains available only for the explicit chat endpoints. The task router does not use it and does not execute coding agents or untrusted project code.
+Git worktrees isolate source-control state, not the operating-system process. Qwen Code receives an additional Docker filesystem boundary in Phase 6 because live validation proved that prompt instructions and `cwd` do not prevent an agent from choosing an external absolute path. OpenCode and Aider still use host execution when explicitly enabled, and best-effort Windows process termination may not kill every descendant process. Phase 11 will replace this agent-specific safeguard with a generalized sandbox execution backend.
+
+The local Qwen Code 0.22.3 and `qwen3:8b` combination completed the bounded live validation that created a new documentation file. Existing-file edits that required a read followed by another tool call were not consistently reliable because the model sometimes interpreted tool output as a new instruction. This is a current model/CLI limitation, not a successful general-purpose edit guarantee.

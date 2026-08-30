@@ -4,6 +4,7 @@ const agentRoutes = require('./routes/agent.routes');
 const healthRoutes = require('./routes/health.routes');
 const ollamaRoutes = require('./routes/ollama.routes');
 const routerRoutes = require('./routes/router.routes');
+const taskRoutes = require('./routes/task.routes');
 
 function createApp() {
   const app = express();
@@ -15,6 +16,7 @@ function createApp() {
   app.use('/api', ollamaRoutes);
   app.use('/api/agents', agentRoutes);
   app.use('/api/router', routerRoutes);
+  app.use('/api/tasks', taskRoutes);
 
   app.use((request, response) => {
     response.status(404).json({
