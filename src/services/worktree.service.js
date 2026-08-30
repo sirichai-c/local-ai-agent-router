@@ -24,6 +24,18 @@ function sanitizeAgentId(agentId) {
   return sanitized;
 }
 
+function validateTaskId(taskId) {
+  const normalized = String(taskId).trim().toLowerCase();
+
+  if (!/^[a-z0-9][a-z0-9-]*$/u.test(normalized)) {
+    throw new Error(
+      'taskId must contain only lowercase letters, numbers, and hyphens',
+    );
+  }
+
+  return normalized;
+}
+
 function isPathInside(parentPath, candidatePath) {
   const relativePath = path.relative(parentPath, candidatePath);
   return relativePath === ''
@@ -70,8 +82,11 @@ class WorktreeService {
     );
   }
 
-  async create({ repo, agentId, baseCommit }) {
+  async create({ repo, agentId, baseCommit, taskId: requestedTaskId }) {
     const safeAgentId = sanitizeAgentId(agentId);
+    const providedTaskId = requestedTaskId === undefined
+      ? null
+      : validateTaskId(requestedTaskId);
     const worktreeRoot = this.getWorktreeRoot(repo);
 
     if (isPathInside(repo, worktreeRoot)) {
@@ -81,7 +96,7 @@ class WorktreeService {
     await this.mkdir(worktreeRoot, { recursive: true });
 
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
-      const taskId = this.idFactory();
+      const taskId = providedTaskId || validateTaskId(this.idFactory());
       const directoryName = `${taskId}-${safeAgentId}`;
       const branch = `agent/${directoryName}`;
       const worktreePath = path.resolve(worktreeRoot, directoryName);
@@ -91,6 +106,12 @@ class WorktreeService {
       ]);
 
       if (branchAlreadyExists || worktreeAlreadyExists) {
+        if (providedTaskId) {
+          throw new Error(
+            `Agent worktree already exists for task ${providedTaskId} and agent ${safeAgentId}`,
+          );
+        }
+
         continue;
       }
 
@@ -121,5 +142,6 @@ module.exports = {
   createTaskId,
   isPathInside,
   sanitizeAgentId,
+  validateTaskId,
   worktreeService,
 };

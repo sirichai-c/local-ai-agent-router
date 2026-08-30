@@ -106,6 +106,10 @@ class AgentExecutorService {
     };
   }
 
+  isExecutionEnabled() {
+    return this.executionEnabled === true;
+  }
+
   async executeTask({ task, workspace }) {
     const analysis = await this.router.analyzeTask(task);
 
@@ -116,7 +120,7 @@ class AgentExecutorService {
       };
     }
 
-    if (!this.executionEnabled) {
+    if (!this.isExecutionEnabled()) {
       return {
         status: 'execution_disabled',
         message: 'Set AGENT_EXECUTION_ENABLED=true to allow agent execution.',
@@ -125,103 +129,148 @@ class AgentExecutorService {
       };
     }
 
-    const adapter = this.adapterResolver(analysis.selectedAgent.id);
+    const repository = await this.validateRepository(workspace);
 
-    if (!adapter) {
-      throw new Error(`No adapter available for ${analysis.selectedAgent.id}`);
+    return this.executeWithAgent({
+      task: analysis.task,
+      agent: analysis.selectedAgent,
+      repository,
+      classification: analysis.classification,
+    });
+  }
+
+  async executeWithAgent({
+    task,
+    agent,
+    repository,
+    taskId,
+    classification = {},
+  }) {
+    if (!this.isExecutionEnabled()) {
+      return {
+        status: 'execution_disabled',
+        message: 'Set AGENT_EXECUTION_ENABLED=true to allow agent execution.',
+        selectedAgent: agent,
+        classification,
+      };
     }
 
-    if (!analysis.selectedAgent.executionCommand) {
+    if (!agent?.id || !agent.available) {
+      throw new Error('Forced agent must be a known, available registry agent');
+    }
+
+    if (!repository?.repo || !repository.baseCommit) {
+      throw new Error('A validated repository snapshot is required');
+    }
+
+    const adapter = this.adapterResolver(agent.id);
+
+    if (!adapter) {
+      throw new Error(`No adapter available for ${agent.id}`);
+    }
+
+    if (!agent.executionCommand) {
       throw new Error(
-        `No spawn-safe executable available for ${analysis.selectedAgent.id}`,
+        `No spawn-safe executable available for ${agent.id}`,
       );
     }
 
-    const repository = await this.validateRepository(workspace);
     const worktree = await this.worktrees.create({
       repo: repository.repo,
-      agentId: analysis.selectedAgent.id,
+      agentId: agent.id,
       baseCommit: repository.baseCommit,
+      taskId,
     });
-    const invocationPlan = adapter.buildInvocation({
-      task: analysis.task,
-      workspace: worktree.worktreePath,
-      model: this.model,
-      command: analysis.selectedAgent.command,
-      executionCommand: analysis.selectedAgent.executionCommand,
-      executionArgs: analysis.selectedAgent.executionArgs,
-      ollamaBaseUrl: this.ollamaBaseUrl,
-    });
-    const invocation = typeof adapter.prepareExecution === 'function'
-      ? await adapter.prepareExecution(invocationPlan)
-      : invocationPlan;
-    const startedAt = this.clock();
-    const processResult = await this.runner.runProcess(invocation);
-    const finishedAt = this.clock();
-    const [worktreeHead, changedFiles, diff, untrackedFiles] = await Promise.all([
-      this.git.getHeadCommit(worktree.worktreePath),
-      this.git.getChangedFiles(worktree.worktreePath),
-      this.git.getDiff(worktree.worktreePath),
-      this.git.getUntrackedFiles(worktree.worktreePath),
-    ]);
-    const autoCommitDetected = worktreeHead !== repository.baseCommit;
-    const evaluation = await this.evaluator.evaluateAgentResult({
-      workspace: worktree.worktreePath,
-      execution: processResult,
-      baseCommit: repository.baseCommit,
-      changedFiles,
-      trackedDiff: diff,
-      untrackedFiles,
-      unexpectedCommit: autoCommitDetected,
-    });
-    const status = mapExecutionStatus({
-      processResult,
-      autoCommitDetected,
-      verdict: evaluation.verdict,
-    });
-    const sensitiveDiffRedacted = (
-      evaluation.diff?.sensitiveFiles?.length || 0
-    ) > 0;
 
-    return {
-      status,
-      taskId: worktree.taskId,
-      selectedAgent: analysis.selectedAgent,
-      classification: analysis.classification,
-      workspace: {
-        requested: repository.requestedWorkspace,
-        original: repository.repo,
-        worktree: worktree.worktreePath,
-        targetBranch: repository.targetBranch,
-        branch: worktree.branch,
+    try {
+      const invocationPlan = adapter.buildInvocation({
+        task,
+        workspace: worktree.worktreePath,
+        model: this.model,
+        command: agent.command,
+        executionCommand: agent.executionCommand,
+        executionArgs: agent.executionArgs,
+        ollamaBaseUrl: this.ollamaBaseUrl,
+      });
+      const invocation = typeof adapter.prepareExecution === 'function'
+        ? await adapter.prepareExecution(invocationPlan)
+        : invocationPlan;
+      const startedAt = this.clock();
+      const processResult = await this.runner.runProcess(invocation);
+      const finishedAt = this.clock();
+      const [worktreeHead, changedFiles, diff, untrackedFiles] = await Promise.all([
+        this.git.getHeadCommit(worktree.worktreePath),
+        this.git.getChangedFiles(worktree.worktreePath),
+        this.git.getDiff(worktree.worktreePath),
+        this.git.getUntrackedFiles(worktree.worktreePath),
+      ]);
+      const autoCommitDetected = worktreeHead !== repository.baseCommit;
+      const evaluation = await this.evaluator.evaluateAgentResult({
+        workspace: worktree.worktreePath,
+        execution: processResult,
         baseCommit: repository.baseCommit,
-        headCommit: worktreeHead,
-      },
-      execution: {
-        command: processResult.command,
-        args: processResult.args,
-        cwd: processResult.cwd,
-        startedAt: startedAt.toISOString(),
-        finishedAt: finishedAt.toISOString(),
-        durationMs: finishedAt.getTime() - startedAt.getTime(),
-        exitCode: processResult.exitCode,
-        timedOut: processResult.timedOut,
-        outputTruncated: processResult.outputTruncated,
-        stdout: sensitiveDiffRedacted ? null : processResult.stdout,
-        stderr: sensitiveDiffRedacted ? null : processResult.stderr,
-        outputRedacted: sensitiveDiffRedacted,
-        error: processResult.error,
-      },
-      changes: {
-        count: evaluation.summary.changedFileCount,
-        files: changedFiles,
+        changedFiles,
+        trackedDiff: diff,
         untrackedFiles,
-        diff: sensitiveDiffRedacted ? null : diff,
-        diffRedacted: sensitiveDiffRedacted,
+        unexpectedCommit: autoCommitDetected,
+      });
+      const status = mapExecutionStatus({
+        processResult,
         autoCommitDetected,
-      },
-      evaluation,
-    };
+        verdict: evaluation.verdict,
+      });
+      const sensitiveDiffRedacted = (
+        evaluation.diff?.sensitiveFiles?.length || 0
+      ) > 0;
+
+      return {
+        status,
+        taskId: worktree.taskId,
+        selectedAgent: agent,
+        classification,
+        workspace: {
+          requested: repository.requestedWorkspace,
+          original: repository.repo,
+          worktree: worktree.worktreePath,
+          targetBranch: repository.targetBranch,
+          branch: worktree.branch,
+          baseCommit: repository.baseCommit,
+          headCommit: worktreeHead,
+        },
+        execution: {
+          command: processResult.command,
+          args: processResult.args,
+          cwd: processResult.cwd,
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          exitCode: processResult.exitCode,
+          timedOut: processResult.timedOut,
+          outputTruncated: processResult.outputTruncated,
+          stdout: sensitiveDiffRedacted ? null : processResult.stdout,
+          stderr: sensitiveDiffRedacted ? null : processResult.stderr,
+          outputRedacted: sensitiveDiffRedacted,
+          error: processResult.error,
+        },
+        changes: {
+          count: evaluation.summary.changedFileCount,
+          files: changedFiles,
+          untrackedFiles,
+          diff: sensitiveDiffRedacted ? null : diff,
+          diffRedacted: sensitiveDiffRedacted,
+          autoCommitDetected,
+        },
+        evaluation,
+      };
+    } catch (error) {
+      error.candidateContext = {
+        taskId: worktree.taskId,
+        worktreePath: worktree.worktreePath,
+        branch: worktree.branch,
+        baseCommit: worktree.baseCommit,
+      };
+      throw error;
+    }
   }
 }
 

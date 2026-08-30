@@ -146,3 +146,75 @@ test('POST /api/tasks/execute requires task and workspace strings', async () => 
     error: 'task and workspace are required',
   });
 });
+
+test('POST /api/tasks/compete validates its body', async () => {
+  const missingResponse = await fetch(`${baseUrl}/api/tasks/compete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(missingResponse.status, 400);
+  assert.deepEqual(await missingResponse.json(), {
+    error: 'task and workspace are required',
+  });
+
+  const invalidAgentsResponse = await fetch(`${baseUrl}/api/tasks/compete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      task: 'safe task',
+      workspace: process.cwd(),
+      agents: 'opencode',
+    }),
+  });
+  assert.equal(invalidAgentsResponse.status, 400);
+  assert.equal((await invalidAgentsResponse.json()).code, 'INVALID_AGENT_LIST');
+
+  const duplicateAgentsResponse = await fetch(`${baseUrl}/api/tasks/compete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      task: 'safe task',
+      workspace: process.cwd(),
+      agents: ['opencode', ' OpenCode '],
+    }),
+  });
+  assert.equal(duplicateAgentsResponse.status, 400);
+  assert.equal(
+    (await duplicateAgentsResponse.json()).code,
+    'DUPLICATE_AGENT_ID',
+  );
+
+  const nonStringAgentResponse = await fetch(`${baseUrl}/api/tasks/compete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      task: 'safe task',
+      workspace: process.cwd(),
+      agents: ['opencode', 42],
+    }),
+  });
+  assert.equal(nonStringAgentResponse.status, 400);
+  assert.equal(
+    (await nonStringAgentResponse.json()).code,
+    'INVALID_AGENT_LIST',
+  );
+});
+
+test('POST /api/tasks/compete respects the default execution gate', async () => {
+  const response = await fetch(`${baseUrl}/api/tasks/compete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      task: 'safe task',
+      workspace: process.cwd(),
+      agents: ['opencode', 'qwen-code'],
+    }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'execution_disabled');
+  assert.equal(body.competitionId, null);
+  assert.deepEqual(body.candidates, []);
+});

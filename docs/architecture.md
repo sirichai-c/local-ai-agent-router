@@ -33,6 +33,17 @@ POST /api/tasks/execute
     → NO COMMIT / NO MERGE
 ```
 
+### Multi-agent competition flow
+
+```text
+POST /api/tasks/compete
+    -> Task route -> Task controller -> Competition service
+    -> Analyze task once -> Capture repository/base commit once
+    -> Sequential forced-agent execution in separate worktrees
+    -> Independent Phase 7 evaluations -> Competition evaluator
+    -> Ranking + candidate winner -> NO COMMIT / NO MERGE / NO CLEANUP
+```
+
 ## Adapter boundary
 
 Every adapter returns a data-only invocation:
@@ -119,6 +130,44 @@ process success + warning   -> completed_with_warnings
 process success + fail      -> evaluation_failed
 process/timeout/commit fail -> failed
 ```
+
+## Competition boundary
+
+```text
+                         Task
+                          |
+                     Analyze Once
+                          |
+                    Same Base Commit
+                          |
+             +------------+------------+
+             |                         |
+             v                         v
+          Agent A                   Agent B
+             |                         |
+         Worktree A                Worktree B
+             |                         |
+         Evaluator A               Evaluator B
+             |                         |
+             +------------+------------+
+                          |
+                          v
+                Competition Evaluator
+                          |
+                       Ranking
+                          |
+                        Winner
+                          |
+                    Candidate Only
+```
+
+The competition service asks the deterministic router for one analysis, validates the original repository once, and captures one `baseCommit`. It passes registry-backed Agent metadata and that repository snapshot to the Agent executor's internal `executeWithAgent` method. That method does not call the router again, so an explicitly selected candidate cannot be replaced by another Agent.
+
+Worktree creation accepts a caller-provided competition ID while retaining automatic IDs for the single-Agent endpoint. Branches therefore share `agent/<competition-id>-` but keep separate Agent suffixes and paths. Candidate execution uses a sequential loop because parallel access to the same Ollama/GPU would distort timing and create resource contention.
+
+After every run, the existing Phase 7 evaluator supplies a 0-100 quality score. The competition evaluator combines 70% quality, 20% router suitability, and 10% relative speed. Only `completed` and `completed_with_warnings` entries are eligible; failed entries remain ranked for diagnosis but cannot win. Deterministic ties prefer competition score, evaluation score, router score, shorter duration, then lexicographic Agent ID.
+
+Candidate results retain untracked-file evidence separately from tracked-diff metadata. No synthetic full patch is created, so the architecture does not imply that `git diff` contains untracked content. Candidate branches and worktrees remain after the response. Phase 8 performs no commit, merge, approval, or automatic cleanup.
 
 Git worktrees isolate repository state but do not sandbox the host process. A live Qwen Code run demonstrated this by writing a hallucinated absolute path outside the worktree; the artifact was removed and Qwen execution now uses its installed Docker sandbox. OpenCode and Aider remain host-backed in Phase 6, process-tree termination on Windows is best effort, and Phase 11 will introduce the generalized sandbox backend.
 

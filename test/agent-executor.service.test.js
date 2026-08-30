@@ -341,3 +341,52 @@ test('executor redacts tracked diff when evaluation detects a sensitive path', a
   assert.equal(result.execution.stderr, null);
   assert.equal(result.execution.outputRedacted, true);
 });
+
+test('forced-agent execution does not reroute and reuses caller task ID', async () => {
+  let worktreeInput;
+  const forcedAgent = {
+    id: 'qwen-code',
+    name: 'Qwen Code',
+    command: 'qwen',
+    executionCommand: 'C:\\tools\\qwen.cmd',
+    executionArgs: [],
+    available: true,
+  };
+  const service = createService({
+    router: {
+      analyzeTask: async () => {
+        throw new Error('router must not run for a forced agent');
+      },
+    },
+    worktrees: {
+      create: async (input) => {
+        worktreeInput = input;
+        return {
+          taskId: input.taskId,
+          repo,
+          worktreePath,
+          branch: `agent/${input.taskId}-qwen-code`,
+          baseCommit,
+        };
+      },
+    },
+  });
+
+  const result = await service.executeWithAgent({
+    task: 'safe task',
+    agent: forcedAgent,
+    repository: {
+      requestedWorkspace: repo,
+      repo,
+      targetBranch: 'main',
+      baseCommit,
+    },
+    taskId: 'competition123',
+    classification: { coding: 80 },
+  });
+
+  assert.equal(worktreeInput.taskId, 'competition123');
+  assert.equal(worktreeInput.agentId, 'qwen-code');
+  assert.equal(result.selectedAgent.id, 'qwen-code');
+  assert.equal(result.workspace.branch, 'agent/competition123-qwen-code');
+});

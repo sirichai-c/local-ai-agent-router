@@ -9,6 +9,11 @@ const DEFAULT_AGENT_PROCESS_TIMEOUT_MS = 600_000;
 const DEFAULT_AGENT_MAX_OUTPUT_BYTES = 1_048_576;
 const DEFAULT_EVALUATOR_MAX_CHANGED_FILES = 50;
 const DEFAULT_EVALUATOR_MAX_DIFF_BYTES = 524_288;
+const DEFAULT_COMPETITION_MAX_AGENTS = 3;
+const DEFAULT_COMPETITION_EXECUTION_MODE = 'sequential';
+const DEFAULT_COMPETITION_QUALITY_WEIGHT = 0.70;
+const DEFAULT_COMPETITION_ROUTER_WEIGHT = 0.20;
+const DEFAULT_COMPETITION_SPEED_WEIGHT = 0.10;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -71,6 +76,60 @@ function parseOptionalPath(value) {
   return value?.trim() || null;
 }
 
+function parseNonNegativeNumber(value, defaultValue, variableName) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    throw new Error(`${variableName} must be a non-negative number`);
+  }
+
+  return parsedValue;
+}
+
+function parseCompetitionExecutionMode(value) {
+  const mode = value?.trim() || DEFAULT_COMPETITION_EXECUTION_MODE;
+
+  if (mode !== 'sequential') {
+    throw new Error(
+      'COMPETITION_EXECUTION_MODE must be sequential in Phase 8',
+    );
+  }
+
+  return mode;
+}
+
+function validateCompetitionWeights(weights, tolerance = 1e-9) {
+  const total = weights.quality + weights.router + weights.speed;
+
+  if (Math.abs(total - 1) > tolerance) {
+    throw new Error('Competition weights must sum to 1.0');
+  }
+
+  return Object.freeze(weights);
+}
+
+const competitionWeights = validateCompetitionWeights({
+  quality: parseNonNegativeNumber(
+    process.env.COMPETITION_QUALITY_WEIGHT,
+    DEFAULT_COMPETITION_QUALITY_WEIGHT,
+    'COMPETITION_QUALITY_WEIGHT',
+  ),
+  router: parseNonNegativeNumber(
+    process.env.COMPETITION_ROUTER_WEIGHT,
+    DEFAULT_COMPETITION_ROUTER_WEIGHT,
+    'COMPETITION_ROUTER_WEIGHT',
+  ),
+  speed: parseNonNegativeNumber(
+    process.env.COMPETITION_SPEED_WEIGHT,
+    DEFAULT_COMPETITION_SPEED_WEIGHT,
+    'COMPETITION_SPEED_WEIGHT',
+  ),
+});
+
 const config = Object.freeze({
   port: parsePort(process.env.PORT),
   serviceName: 'local-ai-agent-router',
@@ -107,6 +166,17 @@ const config = Object.freeze({
       'EVALUATOR_MAX_DIFF_BYTES',
     ),
   }),
+  competition: Object.freeze({
+    maxAgents: parsePositiveInteger(
+      process.env.COMPETITION_MAX_AGENTS,
+      DEFAULT_COMPETITION_MAX_AGENTS,
+      'COMPETITION_MAX_AGENTS',
+    ),
+    executionMode: parseCompetitionExecutionMode(
+      process.env.COMPETITION_EXECUTION_MODE,
+    ),
+    weights: competitionWeights,
+  }),
 });
 
 module.exports = {
@@ -114,7 +184,10 @@ module.exports = {
   parseBaseUrl,
   parseBoolean,
   parseModel,
+  parseCompetitionExecutionMode,
+  parseNonNegativeNumber,
   parseOptionalPath,
   parsePort,
   parsePositiveInteger,
+  validateCompetitionWeights,
 };

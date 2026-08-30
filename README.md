@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 7 adds deterministic evaluation of agent changes after gated execution in an isolated Git worktree. Qwen Code also uses its verified Docker sandbox after live validation demonstrated that a worktree alone cannot confine host filesystem writes. Competition, history, approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
+Phase 8 adds deterministic multi-agent competition. Available agents can solve the same task from the same base commit in separate Git worktrees, after which their Phase 7 evaluations, router suitability, and relative speed are compared. The winner remains an uncommitted candidate: history, approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
 
 ## Requirements
 
@@ -40,6 +40,11 @@ AGENT_WORKTREE_ROOT=
 EVALUATOR_RUN_PROJECT_SCRIPTS=false
 EVALUATOR_MAX_CHANGED_FILES=50
 EVALUATOR_MAX_DIFF_BYTES=524288
+COMPETITION_MAX_AGENTS=3
+COMPETITION_EXECUTION_MODE=sequential
+COMPETITION_QUALITY_WEIGHT=0.70
+COMPETITION_ROUTER_WEIGHT=0.20
+COMPETITION_SPEED_WEIGHT=0.10
 ```
 
 ## Commands
@@ -227,6 +232,44 @@ Execution statuses now distinguish process success from evaluation quality:
 
 `EVALUATOR_RUN_PROJECT_SCRIPTS` defaults to `false`. Phase 7 detects project scripts but never executes Agent-modified `package.json` scripts on the Windows host. Even when the variable is explicitly requested, host execution remains unsupported until the Phase 11A project sandbox exists. Skipped scripts receive no score deduction.
 
+## Multi-Agent Competition
+
+```text
+Same task -> Analyze once -> Same base commit
+    -> Separate agent branches/worktrees -> Independent evaluation
+    -> Deterministic ranking -> Winner candidate
+```
+
+### `POST /api/tasks/compete`
+
+Accepts a task, a clean Git workspace, and an optional list of known Agent IDs:
+
+```json
+{
+  "task": "Add input validation to the API",
+  "workspace": "C:\\Projects\\example",
+  "agents": ["opencode", "qwen-code"]
+}
+```
+
+If `agents` is omitted, the service takes available agents in router-ranking order up to `COMPETITION_MAX_AGENTS`. Explicit unknown, unavailable, duplicate, or over-limit lists are rejected rather than silently substituted. Fewer than two available candidates returns `insufficient_competitors` without running an Agent.
+
+The task is classified once and the clean repository's branch and `baseCommit` are captured once. Every candidate then receives that exact commit, the same competition ID, and its own `agent/<competition-id>-<agent-id>` branch and external worktree. Execution is deliberately sequential because all local agents share Ollama and local CPU/GPU resources. One candidate failure is recorded without preventing later candidates from running.
+
+Competition scores are deterministic:
+
+```text
+70% Phase 7 evaluator quality
+20% router suitability
+10% relative execution speed
+```
+
+Relative speed is `fastest duration / candidate duration * 100`. Only `completed` and `completed_with_warnings` candidates are winner-eligible. `failed` and `evaluation_failed` candidates remain visible for diagnostics but can never win. Ties use evaluation score, router score, duration, and finally Agent ID in that order.
+
+The response preserves each candidate's evaluation, changed and untracked paths, tracked-diff metadata, branch, worktree, and base commit. It does not claim that the tracked diff contains untracked file contents.
+
+The winner is only the best current candidate according to deterministic evidence. Phase 8 does not commit, merge, approve, or delete any candidate branch/worktree. Cleanup remains manual until the approval workflow is implemented.
+
 ## Current architecture
 
 ```text
@@ -277,6 +320,17 @@ POST /api/tasks/execute -> Task controller -> Agent executor
     -> NO COMMIT / NO MERGE
 ```
 
+Competition reuses that execution pipeline without rerouting a forced Agent:
+
+```text
+POST /api/tasks/compete -> Task controller -> Competition service
+    -> Analyze once + capture one base commit
+    -> executeWithAgent(A) -> Worktree A -> Evaluator A
+    -> executeWithAgent(B) -> Worktree B -> Evaluator B
+    -> Competition evaluator -> Ranking -> Candidate winner
+    -> NO COMMIT / NO MERGE / NO CLEANUP
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -297,6 +351,8 @@ POST /api/tasks/execute -> Task controller -> Agent executor
 - Dirty repositories and detached `HEAD` states are rejected without automatic stash or commit.
 - Evaluator file reads are constrained to the worktree and changed symbolic links are not followed.
 - Project scripts are detected but not run on the host during Phase 7.
+- Competition accepts only Agent IDs resolved from the registry; HTTP callers cannot supply an executable command.
+- All competitors start from one captured commit and execute sequentially in separate worktrees.
 
 Git worktrees isolate source-control state, not the operating-system process. Qwen Code receives an additional Docker filesystem boundary in Phase 6 because live validation proved that prompt instructions and `cwd` do not prevent an agent from choosing an external absolute path. OpenCode and Aider still use host execution when explicitly enabled, and best-effort Windows process termination may not kill every descendant process. Phase 11 will replace this agent-specific safeguard with a generalized sandbox execution backend.
 

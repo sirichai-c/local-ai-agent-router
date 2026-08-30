@@ -6,6 +6,7 @@ const {
   WorktreeService,
   isPathInside,
   sanitizeAgentId,
+  validateTaskId,
 } = require('../src/services/worktree.service');
 
 test('worktree service creates an external branch and path from the base commit', async () => {
@@ -61,4 +62,56 @@ test('worktree service rejects a configured root inside the repository', async (
 test('agent ids are sanitized for branch names', () => {
   assert.equal(sanitizeAgentId('Qwen Code_2'), 'qwen-code-2');
   assert.throws(() => sanitizeAgentId('!!!'), /safe branch name/);
+});
+
+test('caller-provided task ID is shared without invoking the ID factory', async () => {
+  let idFactoryCalled = false;
+  const service = new WorktreeService({
+    git: {
+      branchExists: async () => false,
+      createWorktree: async () => {},
+    },
+    idFactory: () => {
+      idFactoryCalled = true;
+      return 'generated';
+    },
+    mkdir: async () => {},
+    exists: async () => false,
+  });
+
+  const result = await service.create({
+    repo: path.resolve('C:\\Projects\\example-repo'),
+    agentId: 'qwen-code',
+    baseCommit: 'abc123',
+    taskId: 'competition123',
+  });
+
+  assert.equal(result.taskId, 'competition123');
+  assert.equal(result.branch, 'agent/competition123-qwen-code');
+  assert.equal(idFactoryCalled, false);
+});
+
+test('provided task ID collision fails instead of changing competition identity', async () => {
+  const service = new WorktreeService({
+    git: {
+      branchExists: async () => true,
+    },
+    mkdir: async () => {},
+    exists: async () => false,
+  });
+
+  await assert.rejects(
+    () => service.create({
+      repo: path.resolve('C:\\Projects\\example-repo'),
+      agentId: 'opencode',
+      baseCommit: 'abc123',
+      taskId: 'competition123',
+    }),
+    /already exists/,
+  );
+});
+
+test('task IDs reject unsafe branch characters', () => {
+  assert.equal(validateTaskId('abc-123'), 'abc-123');
+  assert.throws(() => validateTaskId('../unsafe'), /only lowercase/);
 });
