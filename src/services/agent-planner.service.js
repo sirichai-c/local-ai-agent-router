@@ -4,6 +4,9 @@ const path = require('node:path');
 const { getAdapter } = require('../agents');
 const { config } = require('../config/env');
 const { routerService } = require('./router.service');
+const {
+  agentExecutionBackendService,
+} = require('./agent-execution-backend.service');
 
 class WorkspaceValidationError extends Error {
   constructor(message, code) {
@@ -19,11 +22,13 @@ class AgentPlannerService {
     adapterResolver = getAdapter,
     model = config.ollama.model,
     ollamaBaseUrl = config.ollama.baseUrl,
+    executionBackend = agentExecutionBackendService,
   } = {}) {
     this.router = router;
     this.adapterResolver = adapterResolver;
     this.model = model;
     this.ollamaBaseUrl = ollamaBaseUrl;
+    this.executionBackend = executionBackend;
   }
 
   async resolveWorkspace(workspace) {
@@ -105,13 +110,15 @@ class AgentPlannerService {
       throw new Error(`No executable command available for ${analysis.selectedAgent.id}`);
     }
 
+    const runtimeInput = this.executionBackend.createAdapterInput(
+      analysis.selectedAgent,
+      resolvedWorkspace,
+    );
     const invocation = adapter.buildInvocation({
       task: analysis.task,
       workspace: resolvedWorkspace,
       model: this.model,
-      command: analysis.selectedAgent.command,
-      executionCommand: analysis.selectedAgent.executionCommand,
-      executionArgs: analysis.selectedAgent.executionArgs,
+      ...runtimeInput,
       ollamaBaseUrl: this.ollamaBaseUrl,
     });
 

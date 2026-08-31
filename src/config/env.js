@@ -7,6 +7,8 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 const DEFAULT_OLLAMA_MODEL = 'qwen3:8b';
 const DEFAULT_AGENT_PROCESS_TIMEOUT_MS = 600_000;
 const DEFAULT_AGENT_MAX_OUTPUT_BYTES = 1_048_576;
+const DEFAULT_AGENT_EXECUTION_BACKEND = 'docker';
+const DEFAULT_AGENT_SANDBOX_IMAGE = 'local-agent-router/agent-sandbox:1';
 const DEFAULT_EVALUATOR_MAX_CHANGED_FILES = 50;
 const DEFAULT_EVALUATOR_MAX_DIFF_BYTES = 524_288;
 const DEFAULT_COMPETITION_MAX_AGENTS = 3;
@@ -131,11 +133,11 @@ function parsePositiveNumber(value, defaultValue, variableName) {
   return parsedValue;
 }
 
-function parseSandboxImage(value) {
+function parseSandboxImage(value, variableName = 'SANDBOX_IMAGE') {
   const image = value?.trim() || DEFAULT_SANDBOX_IMAGE;
 
   if (image.startsWith('-') || !/^[a-zA-Z0-9][a-zA-Z0-9._/@:-]*$/u.test(image)) {
-    throw new Error('SANDBOX_IMAGE must be a valid Docker image reference');
+    throw new Error(`${variableName} must be a valid Docker image reference`);
   }
 
   return image;
@@ -149,6 +151,17 @@ function parseDockerMemory(value) {
   }
 
   return memory;
+}
+
+function parseAgentExecutionBackend(value) {
+  const backend = value?.trim().toLowerCase()
+    || DEFAULT_AGENT_EXECUTION_BACKEND;
+
+  if (!['host', 'docker', 'sbx'].includes(backend)) {
+    throw new Error('AGENT_EXECUTION_BACKEND must be host, docker, or sbx');
+  }
+
+  return backend;
 }
 
 function parseCompetitionExecutionMode(value) {
@@ -228,6 +241,13 @@ const config = Object.freeze({
   }),
   agentExecution: Object.freeze({
     enabled: parseBoolean(process.env.AGENT_EXECUTION_ENABLED),
+    backend: parseAgentExecutionBackend(
+      process.env.AGENT_EXECUTION_BACKEND,
+    ),
+    sandboxImage: parseSandboxImage(
+      process.env.AGENT_SANDBOX_IMAGE || DEFAULT_AGENT_SANDBOX_IMAGE,
+      'AGENT_SANDBOX_IMAGE',
+    ),
     timeoutMs: parsePositiveInteger(
       process.env.AGENT_PROCESS_TIMEOUT_MS,
       DEFAULT_AGENT_PROCESS_TIMEOUT_MS,
@@ -320,6 +340,7 @@ const config = Object.freeze({
 module.exports = {
   config,
   parseBaseUrl,
+  parseAgentExecutionBackend,
   parseBoolean,
   parseDatabasePath,
   parseModel,

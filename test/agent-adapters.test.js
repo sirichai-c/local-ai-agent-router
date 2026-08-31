@@ -10,6 +10,7 @@ const {
 const AiderAdapter = require('../src/agents/aider.adapter');
 const BaseAgentAdapter = require('../src/agents/base.adapter');
 const OpenCodeAdapter = require('../src/agents/opencode.adapter');
+const { buildOpenCodePrompt } = require('../src/agents/opencode.adapter');
 const QwenCodeAdapter = require('../src/agents/qwen-code.adapter');
 const {
   buildQwenPrompt,
@@ -86,6 +87,39 @@ test('OpenCodeAdapter builds the locally verified headless invocation', () => {
   });
 });
 
+test('OpenCodeAdapter produces pure container invocation for Docker backend', () => {
+  const invocation = new OpenCodeAdapter().buildInvocation({
+    task,
+    workspace,
+    model,
+    command: 'opencode',
+    executionCommand: 'opencode',
+    executionArgs: [],
+    ollamaBaseUrl,
+    runtime: { backend: 'docker', workspace: '/workspace' },
+  });
+
+  assert.equal(invocation.command, 'opencode');
+  assert.deepEqual(invocation.args.slice(0, 2), ['--pure', 'run']);
+  assert.equal(
+    JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT)
+      .provider.ollama.options.baseURL,
+    'http://host.docker.internal:11434/v1',
+  );
+});
+
+test('OpenCodeAdapter anchors Docker file operations to the mounted worktree', () => {
+  const prompt = buildOpenCodePrompt(task, {
+    backend: 'docker',
+    workspace: '/workspace',
+  });
+
+  assert.match(prompt, /\/workspace/u);
+  assert.match(prompt, /never use placeholder or external paths/u);
+  assert.match(prompt, new RegExp(task.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
+  assert.equal(buildOpenCodePrompt(task, { backend: 'host' }), task);
+});
+
 test('QwenCodeAdapter preserves the command detected by the registry', () => {
   const adapter = new QwenCodeAdapter();
   const invocation = adapter.buildInvocation({
@@ -150,6 +184,36 @@ test('QwenCodeAdapter prepares isolated runtime settings only for execution', as
   );
 });
 
+test('QwenCodeAdapter avoids nested Docker and host runtime writes in Router sandbox', async (t) => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'qwen-container-'));
+  const temporaryWorkspace = path.join(temporaryRoot, 'worktree');
+  await fs.mkdir(temporaryWorkspace);
+  t.after(() => fs.rm(temporaryRoot, { recursive: true, force: true }));
+  const adapter = new QwenCodeAdapter();
+  const invocation = adapter.buildInvocation({
+    task,
+    workspace: temporaryWorkspace,
+    model,
+    command: 'qwen',
+    executionCommand: 'qwen',
+    executionArgs: [],
+    ollamaBaseUrl,
+    runtime: { backend: 'docker', workspace: '/workspace' },
+  });
+  const prepared = await adapter.prepareExecution(invocation);
+
+  assert.equal(invocation.args.includes('--sandbox'), false);
+  assert.equal(invocation.args.includes('--safe-mode'), true);
+  assert.match(invocation.args.join('\n'), /\/workspace/u);
+  assert.equal(invocation.env.QWEN_HOME, '/tmp/qwen');
+  assert.equal(invocation.env.QWEN_SANDBOX, undefined);
+  assert.equal(prepared, invocation);
+  await assert.rejects(
+    () => fs.stat(getQwenRuntimePath(temporaryWorkspace)),
+    { code: 'ENOENT' },
+  );
+});
+
 test('QwenCodeAdapter maps loopback Ollama URLs to the Docker host', () => {
   assert.equal(
     toSandboxOllamaUrl('http://127.0.0.1:11434'),
@@ -167,6 +231,10 @@ test('QwenCodeAdapter maps Windows worktrees to the installed sandbox path', () 
     '/c/Projects/example',
   );
   assert.match(buildQwenPrompt(task, workspace), /\/c\/Projects\/example/);
+});
+
+test('QwenCodeAdapter preserves the Router Docker workspace path', () => {
+  assert.equal(toQwenSandboxPath('/workspace'), '/workspace');
 });
 
 test('QwenCodeAdapter isolates its runtime from the real user profile', () => {

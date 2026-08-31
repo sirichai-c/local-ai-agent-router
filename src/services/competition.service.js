@@ -275,6 +275,10 @@ class CompetitionService {
       };
     }
 
+    if (typeof this.executor.assertExecutionBackendAvailable === 'function') {
+      await this.executor.assertExecutionBackendAvailable();
+    }
+
     const analysis = await this.router.analyzeTask(task);
     const selectedAgents = this.selectCandidates(analysis, normalizedAgentIds);
 

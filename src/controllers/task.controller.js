@@ -18,6 +18,12 @@ const {
   ApprovalError,
   approvalService,
 } = require('../services/approval.service');
+const {
+  AgentExecutionBackendError,
+} = require('../services/agent-execution-backend.service');
+const {
+  AgentSandboxError,
+} = require('../services/sandbox-agent-runner.service');
 
 function sendValidationError(response, error) {
   if (error instanceof WorkspaceValidationError) {
@@ -46,6 +52,15 @@ function sendValidationError(response, error) {
 
   if (error instanceof CandidateReviewError || error instanceof ApprovalError) {
     response.status(error.statusCode || 409).json({
+      error: error.message,
+      code: error.code,
+    });
+    return true;
+  }
+
+  if (error instanceof AgentExecutionBackendError
+    || error instanceof AgentSandboxError) {
+    response.status(error.statusCode || 503).json({
       error: error.message,
       code: error.code,
     });

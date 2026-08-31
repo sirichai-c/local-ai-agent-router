@@ -1,5 +1,15 @@
 const BaseAgentAdapter = require('./base.adapter');
 
+function toContainerOllamaUrl(baseUrl) {
+  const url = new URL(baseUrl);
+
+  if (['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+    url.hostname = 'host.docker.internal';
+  }
+
+  return url.toString().replace(/\/$/u, '');
+}
+
 class AiderAdapter extends BaseAgentAdapter {
   constructor() {
     super({
@@ -16,6 +26,7 @@ class AiderAdapter extends BaseAgentAdapter {
     executionCommand,
     executionArgs,
     ollamaBaseUrl,
+    runtime = { backend: 'host', workspace },
   }) {
     const input = this.validateInvocationInput({
       task,
@@ -30,6 +41,10 @@ class AiderAdapter extends BaseAgentAdapter {
       throw new TypeError('ollamaBaseUrl must be a non-empty string');
     }
 
+    const effectiveBaseUrl = runtime.backend === 'docker'
+      ? toContainerOllamaUrl(ollamaBaseUrl)
+      : ollamaBaseUrl.replace(/\/+$/u, '');
+
     return {
       command: input.command,
       args: [
@@ -43,8 +58,9 @@ class AiderAdapter extends BaseAgentAdapter {
       ],
       cwd: input.workspace,
       env: {
-        OLLAMA_API_BASE: ollamaBaseUrl.replace(/\/+$/, ''),
+        OLLAMA_API_BASE: effectiveBaseUrl,
       },
+      runtime,
       notes: [
         'Headless and Git-control flags are based on current official Aider documentation.',
         'The CLI is not installed locally, so this invocation is not locally verified.',
@@ -55,3 +71,4 @@ class AiderAdapter extends BaseAgentAdapter {
 }
 
 module.exports = AiderAdapter;
+module.exports.toContainerOllamaUrl = toContainerOllamaUrl;

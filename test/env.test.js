@@ -3,6 +3,7 @@ const { test } = require('node:test');
 
 const {
   config,
+  parseAgentExecutionBackend,
   parseCompetitionExecutionMode,
   parseBoolean,
   parseDatabasePath,
@@ -106,4 +107,16 @@ test('sandbox configuration uses bounded validated defaults', () => {
   assert.throws(() => parseDockerMemory('--privileged'), /memory value/);
   assert.equal(parseSandboxImage('safe/image:1'), 'safe/image:1');
   assert.throws(() => parseSandboxImage('--privileged'), /image reference/);
+});
+
+test('Agent execution backend supports explicit fail-closed modes', () => {
+  assert.equal(config.agentExecution.backend, 'host');
+  assert.equal(config.agentExecution.sandboxImage, 'local-agent-router/agent-sandbox:1');
+  assert.equal(parseAgentExecutionBackend(undefined), 'docker');
+  assert.equal(parseAgentExecutionBackend('host'), 'host');
+  assert.equal(parseAgentExecutionBackend('sbx'), 'sbx');
+  assert.throws(
+    () => parseAgentExecutionBackend('automatic'),
+    /must be host, docker, or sbx/,
+  );
 });

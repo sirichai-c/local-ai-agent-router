@@ -42,6 +42,10 @@ function validateNodeLauncher(command, executionArgs) {
 }
 
 function toQwenSandboxPath(workspace) {
+  if (/^\/(?!\/)/u.test(workspace)) {
+    return path.posix.normalize(workspace);
+  }
+
   const resolvedWorkspace = path.resolve(workspace);
   const windowsDrivePath = resolvedWorkspace.match(/^([a-zA-Z]):[\\/](.*)$/);
 
@@ -93,6 +97,7 @@ class QwenCodeAdapter extends BaseAgentAdapter {
     executionCommand,
     executionArgs,
     ollamaBaseUrl,
+    runtime = { backend: 'host', workspace },
   }) {
     const input = this.validateInvocationInput({
       task,
@@ -109,6 +114,11 @@ class QwenCodeAdapter extends BaseAgentAdapter {
 
     validateNodeLauncher(input.command, input.executionArgs);
 
+    const sandboxedByRouter = runtime.backend === 'docker';
+    const runtimeWorkspace = sandboxedByRouter
+      ? runtime.workspace
+      : input.workspace;
+
     return {
       command: input.command,
       args: [
@@ -117,9 +127,9 @@ class QwenCodeAdapter extends BaseAgentAdapter {
         'openai',
         '--approval-mode',
         'auto-edit',
-        '--sandbox',
+        ...(sandboxedByRouter ? ['--safe-mode'] : ['--sandbox']),
         '--prompt',
-        buildQwenPrompt(input.task, input.workspace),
+        buildQwenPrompt(input.task, runtimeWorkspace),
         '--model',
         input.model,
         '--output-format',
@@ -130,12 +140,17 @@ class QwenCodeAdapter extends BaseAgentAdapter {
         OPENAI_API_KEY: 'ollama',
         OPENAI_BASE_URL: toSandboxOllamaUrl(ollamaBaseUrl),
         OPENAI_MODEL: input.model,
-        QWEN_HOME: getQwenRuntimePath(input.workspace),
-        QWEN_RUNTIME_DIR: getQwenRuntimePath(input.workspace),
-        QWEN_SANDBOX: 'docker',
+        QWEN_HOME: sandboxedByRouter
+          ? '/tmp/qwen'
+          : getQwenRuntimePath(input.workspace),
+        QWEN_RUNTIME_DIR: sandboxedByRouter
+          ? '/tmp/qwen'
+          : getQwenRuntimePath(input.workspace),
+        ...(!sandboxedByRouter ? { QWEN_SANDBOX: 'docker' } : {}),
         QWEN_TELEMETRY_ENABLED: 'false',
         QWEN_USAGE_STATISTICS_ENABLED: 'false',
       },
+      runtime,
       notes: [
         'Qwen Code 0.22.3 headless and OpenAI-compatible flags were verified locally.',
         'The npm CLI runs through a fixed trusted Node entry point on Windows.',
@@ -150,6 +165,10 @@ class QwenCodeAdapter extends BaseAgentAdapter {
   }
 
   async prepareExecution(invocation) {
+    if (invocation.runtime?.backend === 'docker') {
+      return invocation;
+    }
+
     const runtimePath = getQwenRuntimePath(invocation.cwd);
     const runtimeSettingsPath = path.join(runtimePath, 'settings.json');
 

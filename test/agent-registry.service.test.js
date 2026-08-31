@@ -50,6 +50,22 @@ test('getAgents reports detected and missing commands without throwing', async (
       executablePath: '/tools/first-fallback',
       executionCommand: '/tools/first-fallback',
       executionArgs: [],
+      runtime: 'host',
+      host: {
+        installed: true,
+        available: true,
+        command: 'first-fallback',
+        executablePath: '/tools/first-fallback',
+        executionCommand: '/tools/first-fallback',
+        executionArgs: [],
+      },
+      sandbox: {
+        available: false,
+        backend: 'host',
+        image: null,
+        command: null,
+        reason: 'sandbox_backend_not_selected',
+      },
     },
     {
       id: 'missing-agent',
@@ -63,6 +79,22 @@ test('getAgents reports detected and missing commands without throwing', async (
       executablePath: null,
       executionCommand: null,
       executionArgs: [],
+      runtime: 'host',
+      host: {
+        installed: false,
+        available: false,
+        command: null,
+        executablePath: null,
+        executionCommand: null,
+        executionArgs: [],
+      },
+      sandbox: {
+        available: false,
+        backend: 'host',
+        image: null,
+        command: null,
+        reason: 'sandbox_backend_not_selected',
+      },
     },
   ]);
 });
@@ -121,4 +153,28 @@ test('getAgentById returns null for an unknown id without inspecting PATH', asyn
 
   assert.equal(agent, null);
   assert.equal(detectionCalled, false);
+});
+
+test('Docker sandbox availability is distinct from host installation', async () => {
+  const service = new AgentRegistryService({
+    agents: [testAgents[0]],
+    executionBackend: 'docker',
+    commandDetector: async () => ({ exists: false, path: null, paths: [] }),
+    sandboxCapabilityProvider: async () => ({
+      available: true,
+      backend: 'docker',
+      image: 'agent-sandbox:1',
+      command: 'first',
+      reason: null,
+    }),
+  });
+  const agent = await service.getAgentById('first-agent');
+
+  assert.equal(agent.installed, false);
+  assert.equal(agent.host.available, false);
+  assert.equal(agent.sandbox.available, true);
+  assert.equal(agent.available, true);
+  assert.equal(agent.runtime, 'docker');
+  assert.equal(agent.command, 'first');
+  assert.equal(agent.executionCommand, 'first');
 });

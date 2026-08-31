@@ -20,6 +20,9 @@ const { evaluatorService } = require('./evaluator.service');
 const {
   candidateFingerprintService,
 } = require('./candidate-fingerprint.service');
+const {
+  AgentExecutionBackendService,
+} = require('./agent-execution-backend.service');
 
 const APPROVAL_ELIGIBLE_STATUSES = new Set([
   'completed',
@@ -54,6 +57,7 @@ class AgentExecutorService {
     git = gitService,
     worktrees = worktreeService,
     runner = processRunnerService,
+    executionBackend,
     evaluator = evaluatorService,
     fingerprints = candidateFingerprintService,
     history = historyService,
@@ -69,6 +73,10 @@ class AgentExecutorService {
     this.git = git;
     this.worktrees = worktrees;
     this.runner = runner;
+    this.executionBackend = executionBackend || new AgentExecutionBackendService({
+      backend: config.agentExecution.backend,
+      hostRunner: runner,
+    });
     this.evaluator = evaluator;
     this.fingerprints = fingerprints;
     this.history = history;
@@ -126,6 +134,12 @@ class AgentExecutorService {
 
   isExecutionEnabled() {
     return this.executionEnabled === true;
+  }
+
+  async assertExecutionBackendAvailable(agentId) {
+    return agentId
+      ? this.executionBackend.assertAvailable(agentId)
+      : this.executionBackend.assertConfiguredAvailable();
   }
 
   async createSingleHistoryTask({ taskId, task, repository, classification }) {
@@ -197,6 +211,10 @@ class AgentExecutorService {
   }
 
   async executeTask({ task, workspace }) {
+    if (this.isExecutionEnabled()) {
+      await this.assertExecutionBackendAvailable();
+    }
+
     const analysis = await this.router.analyzeTask(task);
 
     if (!analysis.selectedAgent) {
@@ -280,11 +298,7 @@ class AgentExecutorService {
       throw new Error(`No adapter available for ${agent.id}`);
     }
 
-    if (!agent.executionCommand) {
-      throw new Error(
-        `No spawn-safe executable available for ${agent.id}`,
-      );
-    }
+    await this.assertExecutionBackendAvailable(agent.id);
 
     const worktree = await this.worktrees.create({
       repo: repository.repo,
@@ -294,20 +308,27 @@ class AgentExecutorService {
     });
 
     try {
+      const runtimeInput = this.executionBackend.createAdapterInput(
+        agent,
+        worktree.worktreePath,
+      );
       const invocationPlan = adapter.buildInvocation({
         task,
         workspace: worktree.worktreePath,
         model: this.model,
-        command: agent.command,
-        executionCommand: agent.executionCommand,
-        executionArgs: agent.executionArgs,
+        ...runtimeInput,
         ollamaBaseUrl: this.ollamaBaseUrl,
       });
       const invocation = typeof adapter.prepareExecution === 'function'
         ? await adapter.prepareExecution(invocationPlan)
         : invocationPlan;
       const startedAt = this.clock();
-      const processResult = await this.runner.runProcess(invocation);
+      const processResult = await this.executionBackend.run({
+        invocation,
+        agent,
+        worktree,
+        ollamaBaseUrl: this.ollamaBaseUrl,
+      });
       const finishedAt = this.clock();
       const [worktreeHead, changedFiles, diff, untrackedFiles] = await Promise.all([
         this.git.getHeadCommit(worktree.worktreePath),
@@ -386,6 +407,9 @@ class AgentExecutorService {
           stderr: sensitiveDiffRedacted ? null : processResult.stderr,
           outputRedacted: sensitiveDiffRedacted,
           error: processResult.error,
+          sandbox: processResult.sandbox || {
+            backend: 'host',
+          },
         },
         changes: {
           count: evaluation.summary.changedFileCount,
