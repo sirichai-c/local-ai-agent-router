@@ -221,6 +221,51 @@ History / performance route -> Controller -> Service
     -> Prepared SQLite query -> Structured metadata response
 ```
 
+## Human review and approval boundary
+
+```text
+                   Agent Result
+                        |
+                     Evaluator
+                        |
+                   Candidate
+                        |
+               Candidate Fingerprint
+                        |
+                  Human Review
+                     /      \
+                    /        \
+                Reject      Approve
+                  |            |
+               Cleanup     Revalidate
+                               |
+                         Same fingerprint?
+                               |
+                         Same base HEAD?
+                               |
+                         Target clean?
+                               |
+                            Commit
+                               |
+                         Local no-ff merge
+                               |
+                          Local target
+                               |
+                            Cleanup
+```
+
+Candidate tracking begins after execution and evaluation. Only `completed` and `completed_with_warnings` runs receive approval fingerprints. A single task uses its sole eligible run; a competition uses the same eligibility and deterministic tie policy as Phase 8 and validates the stored winner ID against the derived winner.
+
+The fingerprint service hashes the base commit, current worktree `HEAD`, normalized Git status, tracked diff, sorted untracked paths, and streamed hashes of safe regular untracked files. It also creates an internal index-independent content snapshot used to verify the state again after staging. Lexical traversal, real-path escape, symbolic links, non-regular files, truncated tracked evidence, and mutation during streaming prevent approval.
+
+Review resolves the task ID to database-owned repository, branch, and worktree metadata. It requires the exact expected `agent/<task>-<agent>` name and worktree-root location, confirms Git still registers that pair, then recomputes evidence. It never replaces the stored fingerprint when a candidate changes.
+
+Approval requires the human-provided stored fingerprint and a matching fresh fingerprint. Before Git mutation it confirms the original repository is clean, on the recorded target branch, at the recorded base commit, and has no merge or rebase in progress. After staging it compares the content snapshot again, rejects unstaged/untracked races, creates a controlled candidate commit, verifies ancestry and the committed patch, and rechecks the target immediately before merging the immutable candidate commit. No Agent or general execution endpoint can call this service indirectly.
+
+The version-2 SQLite migration adds target/base/decision/commit/winner metadata to `tasks` and `candidate_fingerprint` to `agent_runs` with idempotent `ALTER TABLE` operations. Existing Phase 9 rows remain intact but have null approval fields and cannot be silently approved.
+
+Successful approval records `approved` and `merged` metadata before validated worktree cleanup. A cleanup warning never rolls back a valid local merge. Rejection records `rejected` before force-removing validated disposable worktrees and branches, and never mutates the target branch. No Phase 10 operation pushes a remote.
+
 Git worktrees isolate repository state but do not sandbox the host process. A live Qwen Code run demonstrated this by writing a hallucinated absolute path outside the worktree; the artifact was removed and Qwen execution now uses its installed Docker sandbox. OpenCode and Aider remain host-backed in Phase 6, process-tree termination on Windows is best effort, and Phase 11 will introduce the generalized sandbox backend.
 
 The final `qwen3:8b` validation completed a bounded single-write documentation task. Multi-tool existing-file edits were not consistently reliable with Qwen Code 0.22.3 because the model sometimes interpreted a tool result as a new instruction, so this phase does not claim reliable general-purpose editing for that model and CLI combination.

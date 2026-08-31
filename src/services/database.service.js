@@ -5,7 +5,7 @@ const BetterSqlite3 = require('better-sqlite3');
 
 const { config } = require('../config/env');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
 
 const SCHEMA_SQL = `
@@ -16,7 +16,14 @@ const SCHEMA_SQL = `
     mode TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    target_branch TEXT,
+    base_commit TEXT,
+    decision TEXT,
+    decision_at TEXT,
+    candidate_commit TEXT,
+    merge_commit TEXT,
+    winner_agent_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS task_categories (
@@ -43,6 +50,7 @@ const SCHEMA_SQL = `
     changed_files INTEGER,
     branch TEXT,
     worktree TEXT,
+    candidate_fingerprint TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
@@ -57,7 +65,57 @@ const SCHEMA_SQL = `
     ON task_categories(task_id);
   CREATE INDEX IF NOT EXISTS idx_task_categories_category
     ON task_categories(category);
+
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+  );
 `;
+
+const PHASE_10_TASK_COLUMNS = Object.freeze({
+  target_branch: 'TEXT',
+  base_commit: 'TEXT',
+  decision: 'TEXT',
+  decision_at: 'TEXT',
+  candidate_commit: 'TEXT',
+  merge_commit: 'TEXT',
+  winner_agent_id: 'TEXT',
+});
+
+function getColumnNames(connection, tableName) {
+  return new Set(
+    connection.pragma(`table_info(${tableName})`).map((column) => column.name),
+  );
+}
+
+function addMissingColumns(connection, tableName, columns) {
+  const existingColumns = getColumnNames(connection, tableName);
+
+  for (const [columnName, definition] of Object.entries(columns)) {
+    if (!existingColumns.has(columnName)) {
+      // Identifiers and definitions are application constants, never runtime input.
+      connection.exec(
+        `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`,
+      );
+    }
+  }
+}
+
+function applyPhase10Migration(connection, appliedAt = new Date().toISOString()) {
+  const migrate = connection.transaction(() => {
+    addMissingColumns(connection, 'tasks', PHASE_10_TASK_COLUMNS);
+    addMissingColumns(connection, 'agent_runs', {
+      candidate_fingerprint: 'TEXT',
+    });
+    connection.prepare(`
+      INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+      VALUES (?, ?)
+    `).run(2, appliedAt);
+    connection.pragma('user_version = 2');
+  });
+
+  migrate();
+}
 
 function resolveDatabasePath(databasePath, cwd = process.cwd()) {
   if (databasePath === ':memory:') {
@@ -116,8 +174,8 @@ class DatabaseService {
 
     connection.exec(SCHEMA_SQL);
 
-    if (currentVersion < SCHEMA_VERSION) {
-      connection.pragma(`user_version = ${SCHEMA_VERSION}`);
+    if (currentVersion < 2) {
+      applyPhase10Migration(connection);
     }
   }
 
@@ -153,8 +211,11 @@ const databaseService = new DatabaseService();
 
 module.exports = {
   DatabaseService,
+  PHASE_10_TASK_COLUMNS,
   SCHEMA_SQL,
   SCHEMA_VERSION,
+  addMissingColumns,
+  applyPhase10Migration,
   databaseService,
   resolveDatabasePath,
 };

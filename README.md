@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 9 adds persistent performance memory and deterministic adaptive routing. Completed single-Agent and competition runs are recorded as metadata in local SQLite storage, and future routing can blend static capability priors with category-specific and recent performance. Winners remain uncommitted candidates: approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
+Phase 10 adds an explicit human review and approval boundary. Eligible single-Agent and competition winners receive a cryptographic fingerprint after evaluation; only a human request that supplies that exact reviewed fingerprint may create a candidate commit and merge it into the unchanged local target branch. Generalized agent sandboxing will be added in Phase 11.
 
 ## Requirements
 
@@ -313,6 +313,42 @@ Returns registry metadata plus global and recent statistics for one known Agent.
 
 Returns category-weighted evaluation performance, pass rate, and average duration for one of the ten known task categories. Distinct Agent runs determine sample size, so multi-category tasks are not counted multiple times.
 
+## Human Approval Workflow
+
+```text
+Candidate -> Evaluator -> SHA-256 fingerprint -> Human review
+    -> Reject: preserve target + clean candidate state
+    -> Approve exact fingerprint: revalidate -> commit -> local merge -> cleanup
+```
+
+A competition winner is only a candidate, and an evaluator `pass` is only evidence. Neither can merge code. The only merge entry point is the human approval endpoint, which requires the fingerprint returned by a fresh candidate review.
+
+The fingerprint includes the evaluated base commit, current worktree `HEAD`, normalized Git status, tracked diff, untracked paths, and streamed SHA-256 content hashes for safe regular untracked files. Candidate paths are constrained lexically and by real path to the registered worktree; symbolic-link escapes are rejected. The database stores only the final fingerprint, not untracked contents.
+
+Before approval mutates Git, the service verifies the stored and expected fingerprints, recomputes fresh evidence, confirms the candidate is unchanged and has real changes, and checks that the original repository is clean, on the recorded target branch, free of merge/rebase state, and still at the recorded base commit. It never checks out, stashes, rebases, resets hard, cleans, or pushes the target repository.
+
+After revalidation, the workflow stages the candidate worktree, verifies that the staged snapshot still equals the human-reviewed content snapshot, creates a controlled single-line `agent:` commit, and verifies its committed patch and ancestry. The local target merges the immutable reviewed commit with a no-fast-forward merge. Only after the database records approval are the winner and loser worktrees and validated `agent/<task>-<agent>` branches removed.
+
+### `GET /api/tasks/:id/candidate`
+
+Inspects the current registered candidate worktree rather than trusting stale SQLite Git metadata. The response includes current changed/untracked paths, a redacted tracked diff when necessary, the stored fingerprint, and `approvable` plus a reason. Phase 9 candidates without fingerprints return `candidate_not_approval_compatible` and must be rerun.
+
+### `POST /api/tasks/:id/approve`
+
+Requires:
+
+```json
+{
+  "expectedFingerprint": "sha256:..."
+}
+```
+
+Fingerprint mismatch, candidate mutation, a dirty/wrong/stale target, or an in-progress Git operation returns HTTP 409 without merging. Repeated approval is idempotent and returns `already_approved`. Approval merges only the local target branch; remote push remains a separate explicit user action.
+
+### `POST /api/tasks/:id/reject`
+
+Records rejection before validated candidate cleanup and never changes the target branch. Repeated rejection returns `already_rejected`. An approved task cannot be rejected, and a rejected task cannot later be approved.
+
 ## Current architecture
 
 ```text
@@ -381,6 +417,14 @@ Execution / competition -> Evaluator result -> History service -> SQLite
     -> Performance service -> Future adaptive routing
 ```
 
+Human review is the final local Git boundary:
+
+```text
+Eligible result -> Stored fingerprint -> Fresh review
+    -> Human expected fingerprint -> Target/base checks
+    -> Candidate commit -> Local no-ff merge -> Decision + cleanup
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -405,6 +449,11 @@ Execution / competition -> Evaluator result -> History service -> SQLite
 - All competitors start from one captured commit and execute sequentially in separate worktrees.
 - SQLite statements use bound parameters, runtime database files are ignored by Git, and history stores metadata rather than Agent output or code content.
 - Adaptive routing is statistical and deterministic; it never asks an LLM to interpret history or mutates static capability priors.
+- Approval accepts only a task ID and expected SHA-256 fingerprint; callers cannot provide a command, branch, worktree, commit, or merge target.
+- Candidate evidence is recomputed before staging, and the staged/committed snapshot is verified before local merge.
+- Target cleanliness, branch, base `HEAD`, and merge/rebase state are checked without automatic checkout, stash, rebase, hard reset, or clean.
+- Cleanup accepts only registered worktrees under the configured project root with the exact expected `agent/<task>-<agent>` branch.
+- Approval never pushes a remote; local merge and remote publication remain separate human decisions.
 
 Git worktrees isolate source-control state, not the operating-system process. Qwen Code receives an additional Docker filesystem boundary in Phase 6 because live validation proved that prompt instructions and `cwd` do not prevent an agent from choosing an external absolute path. OpenCode and Aider still use host execution when explicitly enabled, and best-effort Windows process termination may not kill every descendant process. Phase 11 will replace this agent-specific safeguard with a generalized sandbox execution backend.
 

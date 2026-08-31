@@ -64,6 +64,7 @@ function toCandidateResult(result, agent) {
     adaptiveScore: agent.adaptive ? agent.score : null,
     adaptive: agent.adaptive ?? false,
     status: result.status,
+    candidateFingerprint: result.candidateFingerprint || null,
     durationMs: result.execution?.durationMs ?? null,
     branch: result.workspace?.branch ?? null,
     worktree: result.workspace?.worktree ?? null,
@@ -94,6 +95,7 @@ function toFailedCandidate(agent, repository, error) {
     adaptiveScore: agent.adaptive ? agent.score : null,
     adaptive: agent.adaptive ?? false,
     status: 'failed',
+    candidateFingerprint: null,
     durationMs: null,
     branch: context.branch || null,
     worktree: context.worktreePath || null,
@@ -189,6 +191,8 @@ class CompetitionService {
         workspace: repository.repo,
         mode: 'competition',
         classification: analysis.classification,
+        targetBranch: repository.targetBranch,
+        baseCommit: repository.baseCommit,
       });
     } catch (error) {
       throw new HistoryPersistenceError(
@@ -229,7 +233,9 @@ class CompetitionService {
     }
 
     try {
-      await this.history.completeTask(competitionId, comparison.status);
+      await this.history.completeTask(competitionId, comparison.status, {
+        winnerAgentId: comparison.winner?.agentId || null,
+      });
     } catch {
       errors.push('task_completion');
     }

@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { test } = require('node:test');
+
+const BetterSqlite3 = require('better-sqlite3');
 
 const {
   DatabaseService,
@@ -24,7 +28,12 @@ test('database service creates the SQLite file, schema, indexes, and pragmas', a
     ORDER BY name
   `).all().map((row) => row.name);
 
-  assert.deepEqual(tables, ['agent_runs', 'task_categories', 'tasks']);
+  assert.deepEqual(tables, [
+    'agent_runs',
+    'schema_migrations',
+    'task_categories',
+    'tasks',
+  ]);
   assert.deepEqual(indexes, [
     'idx_agent_runs_agent_created',
     'idx_agent_runs_agent_id',
@@ -89,4 +98,119 @@ test('in-memory databases remain supported for isolated tests', () => {
     0,
   );
   database.close();
+});
+
+test('Phase 9 database migrates non-destructively to Phase 10', async (t) => {
+  const temporaryRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'agent-router-phase9-migration-'),
+  );
+  const databasePath = path.join(temporaryRoot, 'phase9.db');
+  const oldDatabase = new BetterSqlite3(databasePath);
+  oldDatabase.exec(`
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      task_text TEXT NOT NULL,
+      workspace TEXT,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE TABLE task_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      score REAL NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      UNIQUE(task_id, category)
+    );
+    CREATE TABLE agent_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      router_score REAL,
+      static_score REAL,
+      adaptive_score REAL,
+      evaluation_score REAL,
+      verdict TEXT,
+      competition_score REAL,
+      duration_ms INTEGER,
+      changed_files INTEGER,
+      branch TEXT,
+      worktree TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    );
+    PRAGMA user_version = 1;
+  `);
+  oldDatabase.prepare(`
+    INSERT INTO tasks (
+      id, task_text, mode, status, created_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    'old-task',
+    'preserve Phase 9 history',
+    'single',
+    'completed',
+    '2026-01-01T00:00:00.000Z',
+  );
+  oldDatabase.close();
+
+  const database = new DatabaseService({ databasePath });
+  t.after(async () => {
+    database.close();
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  });
+  const connection = database.getConnection();
+  const taskColumns = new Set(
+    connection.pragma('table_info(tasks)').map((column) => column.name),
+  );
+  const runColumns = new Set(
+    connection.pragma('table_info(agent_runs)').map((column) => column.name),
+  );
+
+  assert.equal(connection.pragma('user_version', { simple: true }), 2);
+  assert.equal(taskColumns.has('target_branch'), true);
+  assert.equal(taskColumns.has('base_commit'), true);
+  assert.equal(taskColumns.has('decision'), true);
+  assert.equal(taskColumns.has('candidate_commit'), true);
+  assert.equal(taskColumns.has('merge_commit'), true);
+  assert.equal(runColumns.has('candidate_fingerprint'), true);
+  assert.equal(
+    connection.prepare('SELECT task_text FROM tasks WHERE id = ?')
+      .get('old-task').task_text,
+    'preserve Phase 9 history',
+  );
+});
+
+test('Phase 10 migration can initialize repeatedly without record loss', async (t) => {
+  const { database } = await createTemporaryDatabase(t);
+  const connection = database.getConnection();
+  connection.prepare(`
+    INSERT INTO tasks (
+      id, task_text, mode, status, created_at, decision
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    'migration-repeat',
+    'keep me',
+    'single',
+    'completed',
+    '2026-01-01T00:00:00.000Z',
+    'pending',
+  );
+
+  database.initializeSchema(connection);
+  database.initializeSchema(connection);
+
+  assert.equal(
+    connection.prepare('SELECT COUNT(*) AS count FROM tasks').get().count,
+    1,
+  );
+  assert.equal(
+    connection.prepare(`
+      SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 2
+    `).get().count,
+    1,
+  );
 });

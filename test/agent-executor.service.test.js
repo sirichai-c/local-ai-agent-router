@@ -93,6 +93,11 @@ function createService(overrides = {}) {
         summary: { changedFileCount: 1 },
       }),
     },
+    fingerprints: {
+      capture: async () => ({
+        fingerprint: `sha256:${'a'.repeat(64)}`,
+      }),
+    },
     history: {
       createTask: async () => {},
       recordExecutionResult: async () => 1,
@@ -415,10 +420,18 @@ test('single-agent execution persists one task and one run to SQLite', async (t)
   assert.equal(result.history.persisted, true);
   assert.equal(stored.mode, 'single');
   assert.equal(stored.status, 'completed');
+  assert.equal(stored.targetBranch, 'main');
+  assert.equal(stored.baseCommit, baseCommit);
+  assert.equal(stored.decision, 'pending');
+  assert.equal(stored.winnerAgentId, 'opencode');
   assert.equal(stored.runs.length, 1);
   assert.equal(stored.runs[0].agentId, 'opencode');
   assert.equal(stored.runs[0].evaluationScore, 100);
   assert.equal(stored.runs[0].competitionScore, null);
+  assert.equal(
+    stored.runs[0].candidateFingerprint,
+    `sha256:${'a'.repeat(64)}`,
+  );
 });
 
 test('disabled single-agent execution does not create history', async () => {

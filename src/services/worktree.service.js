@@ -42,6 +42,36 @@ function isPathInside(parentPath, candidatePath) {
     || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
+function pathsEqual(leftPath, rightPath) {
+  const left = path.resolve(leftPath);
+  const right = path.resolve(rightPath);
+
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+async function canonicalPath(candidatePath) {
+  try {
+    return await fs.realpath(path.resolve(candidatePath));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return path.resolve(candidatePath);
+    }
+
+    throw error;
+  }
+}
+
+async function pathsReferToSameLocation(leftPath, rightPath) {
+  const [left, right] = await Promise.all([
+    canonicalPath(leftPath),
+    canonicalPath(rightPath),
+  ]);
+
+  return pathsEqual(left, right);
+}
+
 async function pathExists(candidatePath) {
   try {
     await fs.stat(candidatePath);
@@ -140,7 +170,10 @@ const worktreeService = new WorktreeService();
 module.exports = {
   WorktreeService,
   createTaskId,
+  canonicalPath,
   isPathInside,
+  pathsEqual,
+  pathsReferToSameLocation,
   sanitizeAgentId,
   validateTaskId,
   worktreeService,

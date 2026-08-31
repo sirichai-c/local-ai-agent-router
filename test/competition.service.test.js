@@ -46,6 +46,9 @@ function analysisWith(ranking = [
 function successfulResult(selectedAgent, taskId, durationMs = 100) {
   return {
     status: 'completed',
+    candidateFingerprint: `sha256:${selectedAgent.id === 'opencode'
+      ? 'a'.repeat(64)
+      : 'b'.repeat(64)}`,
     taskId,
     selectedAgent,
     workspace: {
@@ -360,12 +363,17 @@ test('competition persists one task and one run per candidate to SQLite', async 
   assert.equal(result.history.persisted, true);
   assert.equal(stored.mode, 'competition');
   assert.equal(stored.status, 'completed');
+  assert.equal(stored.targetBranch, 'main');
+  assert.equal(stored.baseCommit, baseCommit);
+  assert.equal(stored.decision, 'pending');
+  assert.equal(stored.winnerAgentId, 'opencode');
   assert.equal(stored.runs.length, 2);
   assert.deepEqual(
     stored.runs.map((run) => run.agentId),
     ['opencode', 'qwen-code'],
   );
   assert.ok(stored.runs.every((run) => run.competitionScore !== null));
+  assert.ok(stored.runs.every((run) => run.candidateFingerprint !== null));
 });
 
 test('competition routing scores stay frozen until every candidate finishes', async () => {

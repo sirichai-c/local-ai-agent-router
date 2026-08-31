@@ -255,3 +255,45 @@ test('performance APIs validate agent IDs and task categories', async () => {
     'UNKNOWN_TASK_CATEGORY',
   );
 });
+
+test('Phase 10 candidate endpoints use controlled HTTP validation', async () => {
+  const missingCandidate = await fetch(
+    `${baseUrl}/api/tasks/not-present/candidate`,
+  );
+  assert.equal(missingCandidate.status, 404);
+  assert.equal((await missingCandidate.json()).code, 'TASK_NOT_FOUND');
+
+  const missingFingerprint = await fetch(
+    `${baseUrl}/api/tasks/not-present/approve`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+  );
+  assert.equal(missingFingerprint.status, 400);
+  assert.equal(
+    (await missingFingerprint.json()).code,
+    'invalid_expected_fingerprint',
+  );
+
+  const unknownApproval = await fetch(
+    `${baseUrl}/api/tasks/not-present/approve`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedFingerprint: `sha256:${'a'.repeat(64)}`,
+      }),
+    },
+  );
+  assert.equal(unknownApproval.status, 404);
+  assert.equal((await unknownApproval.json()).code, 'task_not_found');
+
+  const unknownRejection = await fetch(
+    `${baseUrl}/api/tasks/not-present/reject`,
+    { method: 'POST' },
+  );
+  assert.equal(unknownRejection.status, 404);
+  assert.equal((await unknownRejection.json()).code, 'task_not_found');
+});

@@ -77,6 +77,7 @@ function createAgentRunRecord({
       : null,
     branch,
     worktree,
+    candidateFingerprint: result.candidateFingerprint || null,
   };
 }
 
@@ -100,6 +101,9 @@ class HistoryService {
     mode,
     classification = {},
     status = 'running',
+    targetBranch = null,
+    baseCommit = null,
+    decision = 'pending',
   }) {
     if (typeof id !== 'string' || id.trim() === '') {
       throw new TypeError('task history id is required');
@@ -119,9 +123,27 @@ class HistoryService {
     const connection = this.database.getConnection();
     const insertTask = connection.prepare(`
       INSERT INTO tasks (
-        id, task_text, workspace, mode, status, created_at, completed_at
+        id,
+        task_text,
+        workspace,
+        mode,
+        status,
+        created_at,
+        completed_at,
+        target_branch,
+        base_commit,
+        decision
       ) VALUES (
-        @id, @task, @workspace, @mode, @status, @createdAt, NULL
+        @id,
+        @task,
+        @workspace,
+        @mode,
+        @status,
+        @createdAt,
+        NULL,
+        @targetBranch,
+        @baseCommit,
+        @decision
       )
     `);
     const insertCategory = connection.prepare(`
@@ -136,6 +158,9 @@ class HistoryService {
         mode,
         status,
         createdAt: this.now(),
+        targetBranch,
+        baseCommit,
+        decision,
       });
 
       for (const [category, score] of categories) {
@@ -161,6 +186,7 @@ class HistoryService {
     changedFiles = null,
     branch = null,
     worktree = null,
+    candidateFingerprint = null,
   }) {
     const connection = this.database.getConnection();
     const result = connection.prepare(`
@@ -178,6 +204,7 @@ class HistoryService {
         changed_files,
         branch,
         worktree,
+        candidate_fingerprint,
         created_at
       ) VALUES (
         @taskId,
@@ -193,6 +220,7 @@ class HistoryService {
         @changedFiles,
         @branch,
         @worktree,
+        @candidateFingerprint,
         @createdAt
       )
     `).run({
@@ -209,6 +237,7 @@ class HistoryService {
       changedFiles,
       branch,
       worktree,
+      candidateFingerprint,
       createdAt: this.now(),
     });
 
@@ -219,12 +248,20 @@ class HistoryService {
     return this.recordAgentRun(createAgentRunRecord(input));
   }
 
-  completeTask(taskId, status) {
+  completeTask(taskId, status, { winnerAgentId = null } = {}) {
     const result = this.database.getConnection().prepare(`
       UPDATE tasks
-      SET status = @status, completed_at = @completedAt
+      SET
+        status = @status,
+        completed_at = @completedAt,
+        winner_agent_id = COALESCE(@winnerAgentId, winner_agent_id)
       WHERE id = @taskId
-    `).run({ taskId, status, completedAt: this.now() });
+    `).run({
+      taskId,
+      status,
+      completedAt: this.now(),
+      winnerAgentId,
+    });
 
     if (result.changes === 0) {
       throw new HistoryNotFoundError(taskId);
@@ -245,6 +282,9 @@ class HistoryService {
         tasks.status,
         tasks.created_at AS createdAt,
         tasks.completed_at AS completedAt,
+        tasks.decision,
+        tasks.decision_at AS decisionAt,
+        tasks.winner_agent_id AS winnerAgentId,
         COUNT(agent_runs.id) AS runCount
       FROM tasks
       LEFT JOIN agent_runs ON agent_runs.task_id = tasks.id
@@ -264,7 +304,14 @@ class HistoryService {
         mode,
         status,
         created_at AS createdAt,
-        completed_at AS completedAt
+        completed_at AS completedAt,
+        target_branch AS targetBranch,
+        base_commit AS baseCommit,
+        decision,
+        decision_at AS decisionAt,
+        candidate_commit AS candidateCommit,
+        merge_commit AS mergeCommit,
+        winner_agent_id AS winnerAgentId
       FROM tasks
       WHERE id = ?
     `).get(taskId);
@@ -294,6 +341,7 @@ class HistoryService {
         changed_files AS changedFiles,
         branch,
         worktree,
+        candidate_fingerprint AS candidateFingerprint,
         created_at AS createdAt
       FROM agent_runs
       WHERE task_id = ?
@@ -307,6 +355,80 @@ class HistoryService {
       ),
       runs,
     };
+  }
+
+  setCandidateFingerprint(runId, fingerprint) {
+    const result = this.database.getConnection().prepare(`
+      UPDATE agent_runs
+      SET candidate_fingerprint = @fingerprint
+      WHERE id = @runId
+    `).run({ runId, fingerprint });
+
+    if (result.changes === 0) {
+      throw new Error('Agent run not found while storing candidate fingerprint');
+    }
+  }
+
+  setCandidateCommit(taskId, candidateCommit) {
+    const result = this.database.getConnection().prepare(`
+      UPDATE tasks
+      SET candidate_commit = @candidateCommit
+      WHERE id = @taskId AND decision = 'pending'
+    `).run({ taskId, candidateCommit });
+
+    if (result.changes === 0) {
+      throw new Error('Task is not pending while storing candidate commit');
+    }
+
+    return this.getTaskById(taskId);
+  }
+
+  recordApproval({
+    taskId,
+    candidateCommit,
+    mergeCommit,
+    winnerAgentId,
+  }) {
+    const result = this.database.getConnection().prepare(`
+      UPDATE tasks
+      SET
+        decision = 'approved',
+        decision_at = @decisionAt,
+        status = 'merged',
+        candidate_commit = @candidateCommit,
+        merge_commit = @mergeCommit,
+        winner_agent_id = @winnerAgentId
+      WHERE id = @taskId AND decision = 'pending'
+    `).run({
+      taskId,
+      decisionAt: this.now(),
+      candidateCommit,
+      mergeCommit,
+      winnerAgentId,
+    });
+
+    if (result.changes === 0) {
+      throw new Error('Task decision changed before approval could be recorded');
+    }
+
+    return this.getTaskById(taskId);
+  }
+
+  recordRejection(taskId) {
+    const result = this.database.getConnection().prepare(`
+      UPDATE tasks
+      SET
+        decision = 'rejected',
+        decision_at = @decisionAt,
+        status = 'rejected'
+      WHERE id = @taskId AND decision = 'pending'
+    `).run({ taskId, decisionAt: this.now() });
+
+    if (result.changes === 0) {
+      throw new Error('Task decision changed before rejection could be recorded');
+    }
+
+    return this.getTaskById(taskId);
   }
 }
 

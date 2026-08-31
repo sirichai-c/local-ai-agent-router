@@ -17,6 +17,14 @@ const { processRunnerService } = require('./process-runner.service');
 const { routerService } = require('./router.service');
 const { createTaskId, worktreeService } = require('./worktree.service');
 const { evaluatorService } = require('./evaluator.service');
+const {
+  candidateFingerprintService,
+} = require('./candidate-fingerprint.service');
+
+const APPROVAL_ELIGIBLE_STATUSES = new Set([
+  'completed',
+  'completed_with_warnings',
+]);
 
 function mapExecutionStatus({ processResult, autoCommitDetected, verdict }) {
   const processSucceeded = processResult.exitCode === 0
@@ -47,6 +55,7 @@ class AgentExecutorService {
     worktrees = worktreeService,
     runner = processRunnerService,
     evaluator = evaluatorService,
+    fingerprints = candidateFingerprintService,
     history = historyService,
     executionEnabled = config.agentExecution.enabled,
     model = config.ollama.model,
@@ -61,6 +70,7 @@ class AgentExecutorService {
     this.worktrees = worktrees;
     this.runner = runner;
     this.evaluator = evaluator;
+    this.fingerprints = fingerprints;
     this.history = history;
     this.executionEnabled = executionEnabled;
     this.model = model;
@@ -126,6 +136,8 @@ class AgentExecutorService {
         workspace: repository.repo,
         mode: 'single',
         classification,
+        targetBranch: repository.targetBranch,
+        baseCommit: repository.baseCommit,
       });
     } catch (error) {
       throw new HistoryPersistenceError(
@@ -145,7 +157,11 @@ class AgentExecutorService {
     }
 
     try {
-      await this.history.completeTask(taskId, result.status);
+      await this.history.completeTask(taskId, result.status, {
+        winnerAgentId: APPROVAL_ELIGIBLE_STATUSES.has(result.status)
+          ? agent.id
+          : null,
+      });
     } catch {
       errors.push('task_completion');
     }
@@ -309,11 +325,33 @@ class AgentExecutorService {
         untrackedFiles,
         unexpectedCommit: autoCommitDetected,
       });
-      const status = mapExecutionStatus({
+      let status = mapExecutionStatus({
         processResult,
         autoCommitDetected,
         verdict: evaluation.verdict,
       });
+      let candidateFingerprint = null;
+      let candidateTracking = {
+        tracked: false,
+        reason: 'candidate_not_eligible',
+      };
+
+      if (APPROVAL_ELIGIBLE_STATUSES.has(status)) {
+        try {
+          const fingerprint = await this.fingerprints.capture({
+            workspace: worktree.worktreePath,
+            baseCommit: repository.baseCommit,
+          });
+          candidateFingerprint = fingerprint.fingerprint;
+          candidateTracking = { tracked: true, reason: null };
+        } catch (error) {
+          status = 'evaluation_failed';
+          candidateTracking = {
+            tracked: false,
+            reason: error.code || 'candidate_fingerprint_failed',
+          };
+        }
+      }
       const sensitiveDiffRedacted = (
         evaluation.diff?.sensitiveFiles?.length || 0
       ) > 0;
@@ -322,6 +360,8 @@ class AgentExecutorService {
         status,
         taskId: worktree.taskId,
         selectedAgent: agent,
+        candidateFingerprint,
+        candidateTracking,
         classification,
         workspace: {
           requested: repository.requestedWorkspace,
@@ -372,6 +412,7 @@ class AgentExecutorService {
 const agentExecutorService = new AgentExecutorService();
 
 module.exports = {
+  APPROVAL_ELIGIBLE_STATUSES,
   AgentExecutorService,
   RepositoryValidationError,
   WorkspaceValidationError,

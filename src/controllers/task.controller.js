@@ -10,6 +10,14 @@ const {
 const {
   HistoryPersistenceError,
 } = require('../services/history.service');
+const {
+  CandidateReviewError,
+  candidateReviewService,
+} = require('../services/candidate-review.service');
+const {
+  ApprovalError,
+  approvalService,
+} = require('../services/approval.service');
 
 function sendValidationError(response, error) {
   if (error instanceof WorkspaceValidationError) {
@@ -30,6 +38,14 @@ function sendValidationError(response, error) {
 
   if (error instanceof HistoryPersistenceError) {
     response.status(500).json({
+      error: error.message,
+      code: error.code,
+    });
+    return true;
+  }
+
+  if (error instanceof CandidateReviewError || error instanceof ApprovalError) {
+    response.status(error.statusCode || 409).json({
       error: error.message,
       code: error.code,
     });
@@ -101,4 +117,69 @@ async function competeTask(request, response) {
   }
 }
 
-module.exports = { competeTask, executeTask };
+async function getCandidate(request, response) {
+  try {
+    response.status(200).json(
+      await candidateReviewService.review(request.params.id),
+    );
+  } catch (error) {
+    if (sendValidationError(response, error)) {
+      return;
+    }
+
+    console.error('Candidate review failed:', error.message);
+    response.status(500).json({ error: 'Unable to review task candidate' });
+  }
+}
+
+async function approveTask(request, response) {
+  const { expectedFingerprint } = request.body || {};
+
+  if (typeof expectedFingerprint !== 'string'
+    || expectedFingerprint.trim() === '') {
+    response.status(400).json({
+      error: 'expectedFingerprint is required',
+      code: 'invalid_expected_fingerprint',
+    });
+    return;
+  }
+
+  try {
+    response.status(200).json(
+      await approvalService.approve(
+        request.params.id,
+        expectedFingerprint.trim(),
+      ),
+    );
+  } catch (error) {
+    if (sendValidationError(response, error)) {
+      return;
+    }
+
+    console.error('Candidate approval failed:', error.message);
+    response.status(500).json({ error: 'Unable to approve task candidate' });
+  }
+}
+
+async function rejectTask(request, response) {
+  try {
+    response.status(200).json(
+      await approvalService.reject(request.params.id),
+    );
+  } catch (error) {
+    if (sendValidationError(response, error)) {
+      return;
+    }
+
+    console.error('Candidate rejection failed:', error.message);
+    response.status(500).json({ error: 'Unable to reject task candidate' });
+  }
+}
+
+module.exports = {
+  approveTask,
+  competeTask,
+  executeTask,
+  getCandidate,
+  rejectTask,
+};
