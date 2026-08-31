@@ -20,6 +20,13 @@ const DEFAULT_ADAPTIVE_HISTORY_WEIGHT = 0.30;
 const DEFAULT_ADAPTIVE_RECENT_WEIGHT = 0.20;
 const DEFAULT_ADAPTIVE_MIN_SAMPLES = 3;
 const DEFAULT_ADAPTIVE_RECENT_SAMPLE_SIZE = 10;
+const DEFAULT_SANDBOX_IMAGE = 'local-agent-router/node-sandbox:1';
+const DEFAULT_SANDBOX_MEMORY = '2g';
+const DEFAULT_SANDBOX_CPUS = 2;
+const DEFAULT_SANDBOX_PIDS_LIMIT = 256;
+const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
+const DEFAULT_SANDBOX_INSTALL_TIMEOUT_MS = 300_000;
+const DEFAULT_SANDBOX_RUN_ROOT = './.sandbox-runs';
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -108,6 +115,40 @@ function parseNonNegativeNumber(value, defaultValue, variableName) {
   }
 
   return parsedValue;
+}
+
+function parsePositiveNumber(value, defaultValue, variableName) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${variableName} must be a positive number`);
+  }
+
+  return parsedValue;
+}
+
+function parseSandboxImage(value) {
+  const image = value?.trim() || DEFAULT_SANDBOX_IMAGE;
+
+  if (image.startsWith('-') || !/^[a-zA-Z0-9][a-zA-Z0-9._/@:-]*$/u.test(image)) {
+    throw new Error('SANDBOX_IMAGE must be a valid Docker image reference');
+  }
+
+  return image;
+}
+
+function parseDockerMemory(value) {
+  const memory = value?.trim().toLowerCase() || DEFAULT_SANDBOX_MEMORY;
+
+  if (!/^\d+(?:\.\d+)?[bkmg]$/u.test(memory)) {
+    throw new Error('SANDBOX_MEMORY must be a positive Docker memory value');
+  }
+
+  return memory;
 }
 
 function parseCompetitionExecutionMode(value) {
@@ -242,6 +283,38 @@ const config = Object.freeze({
       'ADAPTIVE_RECENT_SAMPLE_SIZE',
     ),
   }),
+  sandbox: Object.freeze({
+    enabled: parseBoolean(process.env.SANDBOX_ENABLED, true),
+    image: parseSandboxImage(process.env.SANDBOX_IMAGE),
+    memory: parseDockerMemory(process.env.SANDBOX_MEMORY),
+    cpus: parsePositiveNumber(
+      process.env.SANDBOX_CPUS,
+      DEFAULT_SANDBOX_CPUS,
+      'SANDBOX_CPUS',
+    ),
+    pidsLimit: parsePositiveInteger(
+      process.env.SANDBOX_PIDS_LIMIT,
+      DEFAULT_SANDBOX_PIDS_LIMIT,
+      'SANDBOX_PIDS_LIMIT',
+    ),
+    timeoutMs: parsePositiveInteger(
+      process.env.SANDBOX_TIMEOUT_MS,
+      DEFAULT_SANDBOX_TIMEOUT_MS,
+      'SANDBOX_TIMEOUT_MS',
+    ),
+    installTimeoutMs: parsePositiveInteger(
+      process.env.SANDBOX_INSTALL_TIMEOUT_MS,
+      DEFAULT_SANDBOX_INSTALL_TIMEOUT_MS,
+      'SANDBOX_INSTALL_TIMEOUT_MS',
+    ),
+    installDependencies: parseBoolean(
+      process.env.SANDBOX_INSTALL_DEPENDENCIES,
+      true,
+    ),
+    keepRuns: parseBoolean(process.env.SANDBOX_KEEP_RUNS),
+    runRoot: process.env.SANDBOX_RUN_ROOT?.trim()
+      || DEFAULT_SANDBOX_RUN_ROOT,
+  }),
 });
 
 module.exports = {
@@ -252,9 +325,12 @@ module.exports = {
   parseModel,
   parseCompetitionExecutionMode,
   parseNonNegativeNumber,
+  parsePositiveNumber,
   parseOptionalPath,
   parsePort,
   parsePositiveInteger,
   validateAdaptiveWeights,
   validateCompetitionWeights,
+  parseDockerMemory,
+  parseSandboxImage,
 };

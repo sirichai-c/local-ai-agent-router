@@ -349,6 +349,29 @@ Fingerprint mismatch, candidate mutation, a dirty/wrong/stale target, or an in-p
 
 Records rejection before validated candidate cleanup and never changes the target branch. Repeated rejection returns `already_rejected`. An approved task cannot be rejected, and a rejected task cannot later be approved.
 
+## Project Evaluation Sandbox
+
+Phase 11A separates project checks from the Windows host. When `EVALUATOR_RUN_PROJECT_SCRIPTS=true`, `test`, `lint`, and `build` are executed only through the Docker evaluation sandbox; there is no host `npm test` fallback.
+
+```text
+Candidate worktree -> safe snapshot -> dependency install container
+    -> network-none test/lint/build containers -> Evaluator evidence
+```
+
+The safe snapshot copies regular files without following symbolic links and excludes `.git`, `node_modules`, `.agent-worktrees`, and `.sandbox-runs`. Project scripts modify only this disposable copy, never the candidate that will later be fingerprinted and reviewed.
+
+Dependency installation uses `npm ci` when `package-lock.json` exists, otherwise `npm install`, always with `--ignore-scripts --no-audit --no-fund`. This stage may use Docker's bridge network. Actual project scripts run deterministically in `test`, `lint`, `build` order with `--network none`.
+
+The image is built locally with:
+
+```powershell
+docker build --tag local-agent-router/node-sandbox:1 --file docker/sandbox-node/Dockerfile .
+```
+
+Containers use memory, CPU, and PID limits, drop all Linux capabilities, enable `no-new-privileges`, use a read-only root filesystem and non-root user, and mount only the disposable snapshot as writable. They do not receive the host environment, Docker socket, Router `.env`, user home, or Git metadata. `SANDBOX_KEEP_RUNS=false` removes snapshots after evaluation.
+
+An install failure is reported separately and causes available scripts to remain unexecuted with `passed: null`; it is not misreported as a failed test. An executed script failure continues to use the deterministic Phase 7 project-check deduction.
+
 ## Current architecture
 
 ```text

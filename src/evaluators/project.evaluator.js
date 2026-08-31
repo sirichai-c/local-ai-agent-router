@@ -1,11 +1,15 @@
 const fs = require('node:fs/promises');
 
 const { evaluatorConfig } = require('../config/evaluator');
+const { config } = require('../config/env');
 const { resolveWorkspaceFile } = require('../utils/workspace-path.util');
+const {
+  sandboxProjectEvaluator,
+} = require('./sandbox-project.evaluator');
 
 const PROJECT_SCRIPT_NAMES = Object.freeze(['test', 'lint', 'build']);
 const SCRIPT_DISABLED_REASON = 'Project script execution disabled until sandboxing is available.';
-const SCRIPT_UNSUPPORTED_REASON = 'Host project script execution is unavailable in Phase 7; use the Phase 11A sandbox.';
+const SCRIPT_UNSUPPORTED_REASON = 'Project scripts require the Phase 11A Docker sandbox.';
 
 function createScriptResult(available, reason) {
   return {
@@ -22,11 +26,15 @@ class ProjectEvaluator {
     maxPackageBytes = evaluatorConfig.maxDiffBytes,
     stat = fs.lstat,
     readFile = fs.readFile,
+    sandbox = sandboxProjectEvaluator,
+    sandboxEnabled = config.sandbox.enabled,
   } = {}) {
     this.runProjectScripts = runProjectScripts;
     this.maxPackageBytes = maxPackageBytes;
     this.stat = stat;
     this.readFile = readFile;
+    this.sandbox = sandbox;
+    this.sandboxEnabled = sandboxEnabled;
   }
 
   createScripts(packageScripts = {}) {
@@ -119,14 +127,41 @@ class ProjectEvaluator {
       };
     }
 
-    return {
+    const result = {
       projectType: 'node',
       packageJson: { exists: true, valid: true },
       scriptExecutionPolicy: {
         requested: this.runProjectScripts,
-        supported: false,
+        supported: this.runProjectScripts && this.sandboxEnabled,
+        hostExecution: false,
       },
       scripts: this.createScripts(packageJson.scripts),
+    };
+
+    if (!this.runProjectScripts) {
+      return result;
+    }
+
+    if (!this.sandboxEnabled) {
+      return result;
+    }
+
+    const sandboxResult = await this.sandbox.evaluate({
+      workspace,
+      scripts: packageJson.scripts || {},
+    });
+
+    return {
+      ...result,
+      scriptExecutionPolicy: {
+        requested: true,
+        supported: true,
+        hostExecution: false,
+        sandbox: true,
+      },
+      sandbox: sandboxResult.sandbox,
+      dependencyInstall: sandboxResult.dependencyInstall,
+      scripts: sandboxResult.scripts,
     };
   }
 }

@@ -25,3 +25,4 @@ data/*.db-wal
 .worktrees/
 .agent-worktrees/
 .sandboxes/
+.sandbox-runs/

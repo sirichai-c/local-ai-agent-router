@@ -20,6 +20,8 @@ const DEFAULT_ALLOWED_COMMANDS = Object.freeze([
   'aider.cmd',
   'node',
   'node.exe',
+  'docker',
+  'docker.exe',
 ]);
 
 function killProcessTree(child, {

@@ -266,6 +266,29 @@ The version-2 SQLite migration adds target/base/decision/commit/winner metadata 
 
 Successful approval records `approved` and `merged` metadata before validated worktree cleanup. A cleanup warning never rolls back a valid local merge. Rejection records `rejected` before force-removing validated disposable worktrees and branches, and never mutates the target branch. No Phase 10 operation pushes a remote.
 
+## Project evaluation sandbox
+
+```text
+Candidate worktree (read only to snapshot service)
+        |
+        v
+Safe regular-file snapshot (no .git, node_modules, or symlinks)
+        |
+        +--> dependency install container -- network: bridge
+        |       npm ci/install --ignore-scripts
+        |
+        +--> npm test  container -- network: none
+        +--> npm lint  container -- network: none
+        +--> npm build container -- network: none
+        |
+        v
+Structured project evidence -> Phase 7 scoring
+```
+
+The Router invokes Docker only through the safe process runner with fixed arguments. Evaluation containers run as UID/GID 1000, use a read-only root filesystem plus bounded `/tmp`, drop all capabilities, enable `no-new-privileges`, and apply configured memory, CPU, PID, timeout, and output bounds. The only writable host mount is a validated path beneath `.sandbox-runs`; Docker socket, user home, Router environment, candidate Git metadata, and host dependency trees are not mounted.
+
+Dependency setup is the only stage with Docker bridge networking. Lifecycle scripts are disabled. Untrusted project scripts always run with `--network none`, and enabled evaluation never falls back to running npm scripts directly on Windows.
+
 Git worktrees isolate repository state but do not sandbox the host process. A live Qwen Code run demonstrated this by writing a hallucinated absolute path outside the worktree; the artifact was removed and Qwen execution now uses its installed Docker sandbox. OpenCode and Aider remain host-backed in Phase 6, process-tree termination on Windows is best effort, and Phase 11 will introduce the generalized sandbox backend.
 
 The final `qwen3:8b` validation completed a bounded single-write documentation task. Multi-tool existing-file edits were not consistently reliable with Qwen Code 0.22.3 because the model sometimes interpreted a tool result as a new instruction, so this phase does not claim reliable general-purpose editing for that model and CLI combination.

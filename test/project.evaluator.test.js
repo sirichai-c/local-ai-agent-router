@@ -75,6 +75,7 @@ test('malicious scripts are never executed on the host', async (t) => {
   }));
   const result = await new ProjectEvaluator({
     runProjectScripts: true,
+    sandboxEnabled: false,
   }).evaluate({ workspace });
 
   assert.equal(result.scriptExecutionPolicy.requested, true);
@@ -82,4 +83,41 @@ test('malicious scripts are never executed on the host', async (t) => {
   assert.equal(result.scripts.test.executed, false);
   assert.equal(result.scripts.test.reason, SCRIPT_UNSUPPORTED_REASON);
   await assert.rejects(() => fs.stat(marker), { code: 'ENOENT' });
+});
+
+test('enabled project scripts delegate only to the sandbox evaluator', async (t) => {
+  const workspace = await createWorkspace(t, JSON.stringify({
+    scripts: { test: 'node test.js' },
+  }));
+  let sandboxInput;
+  const result = await new ProjectEvaluator({
+    runProjectScripts: true,
+    sandboxEnabled: true,
+    sandbox: {
+      evaluate: async (input) => {
+        sandboxInput = input;
+        return {
+          sandbox: { requested: true, executed: true, image: 'safe:1' },
+          dependencyInstall: { executed: true, passed: true },
+          scripts: {
+            test: {
+              available: true,
+              executed: true,
+              sandbox: true,
+              network: 'none',
+              passed: true,
+            },
+            lint: { available: false, executed: false, passed: null },
+            build: { available: false, executed: false, passed: null },
+          },
+        };
+      },
+    },
+  }).evaluate({ workspace });
+
+  assert.equal(sandboxInput.workspace, workspace);
+  assert.equal(result.scriptExecutionPolicy.hostExecution, false);
+  assert.equal(result.scriptExecutionPolicy.sandbox, true);
+  assert.equal(result.scripts.test.executed, true);
+  assert.equal(result.scripts.test.passed, true);
 });

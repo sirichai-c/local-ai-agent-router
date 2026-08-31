@@ -7,6 +7,9 @@ const {
   parseBoolean,
   parseDatabasePath,
   parseNonNegativeNumber,
+  parsePositiveNumber,
+  parseDockerMemory,
+  parseSandboxImage,
   parseOptionalPath,
   parsePositiveInteger,
   validateAdaptiveWeights,
@@ -84,4 +87,23 @@ test('adaptive routing configuration uses deterministic validated defaults', () 
     () => validateAdaptiveWeights({ static: 0.5, history: 0.5, recent: 0.5 }),
     /sum to 1.0/,
   );
+});
+
+test('sandbox configuration uses bounded validated defaults', () => {
+  assert.equal(config.sandbox.enabled, true);
+  assert.equal(config.sandbox.image, 'local-agent-router/node-sandbox:1');
+  assert.equal(config.sandbox.memory, '2g');
+  assert.equal(config.sandbox.cpus, 2);
+  assert.equal(config.sandbox.pidsLimit, 256);
+  assert.equal(config.sandbox.timeoutMs, 300_000);
+  assert.equal(config.sandbox.installTimeoutMs, 300_000);
+  assert.equal(config.sandbox.installDependencies, true);
+  assert.equal(config.sandbox.keepRuns, false);
+  assert.equal(config.sandbox.runRoot, './.sandbox-runs');
+  assert.equal(parsePositiveNumber('1.5', 1, 'CPU'), 1.5);
+  assert.throws(() => parsePositiveNumber('0', 1, 'CPU'), /positive number/);
+  assert.equal(parseDockerMemory('512m'), '512m');
+  assert.throws(() => parseDockerMemory('--privileged'), /memory value/);
+  assert.equal(parseSandboxImage('safe/image:1'), 'safe/image:1');
+  assert.throws(() => parseSandboxImage('--privileged'), /image reference/);
 });
