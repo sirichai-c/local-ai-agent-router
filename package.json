@@ -7,7 +7,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --require ./test-support/setup-env.js --test --test-isolation=none"
+    "test": "node --require ./test-support/setup-env.js --test --test-isolation=none",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "web:test": "npm --prefix web run test",
+    "build": "npm run web:build"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 11 adds two separate OS-level boundaries around untrusted work. Project scripts run only in disposable Docker snapshots, and Coding Agents default to a Docker execution backend that mounts only their generated candidate worktree. Human fingerprint approval from Phase 10 remains the only path to a local merge.
+Phase 12 adds a local React Dashboard over the existing request/response APIs. Project scripts still run only in disposable Docker snapshots, Coding Agents default to an isolated Docker backend, and fingerprint-bound human approval remains the only path to a local merge.
 
 ## Requirements
 
@@ -68,6 +68,25 @@ SANDBOX_RUN_ROOT=./.sandbox-runs
 ```
 
 ## Commands
+
+Dashboard commands:
+
+- `npm run web:dev` — run the Vite Dashboard development server on port 5173.
+- `npm run web:test` — run the Dashboard unit and interaction tests.
+- `npm run web:build` — create the local production Dashboard in `web/dist`.
+- `npm run build` — alias for the Dashboard production build.
+
+For Dashboard development, run the backend and frontend in separate terminals:
+
+```powershell
+# Terminal 1
+npm run dev
+
+# Terminal 2
+npm run web:dev
+```
+
+Vite proxies `/api` and `/health` to `http://localhost:3000`, so broad backend CORS is not enabled. For a built local application, run `npm run web:build` and then `npm start`; Express serves the SPA and APIs from `http://localhost:3000`. The backend continues to start and serve APIs when `web/dist` is absent.
 
 - `npm start` — run the API with Node.js.
 - `npm run dev` — run the API with nodemon and restart after source changes.
@@ -523,3 +542,26 @@ Eligible result -> Stored fingerprint -> Fresh review
 Git worktrees isolate source-control state, while the Phase 11 Docker backends restrict process filesystem access. Docker is now the default Agent backend; host execution remains available only when explicitly configured. Container isolation is still not a formal VM boundary, and Agent bridge networking is broader than an Ollama-only allowlist. Windows host-backend process-tree termination remains best effort.
 
 The local Qwen Code 0.22.3 and `qwen3:8b` combination completed the bounded live validation that created a new documentation file. Existing-file edits that required a read followed by another tool call were not consistently reliable because the model sometimes interpreted tool output as a new instruction. This is a current model/CLI limitation, not a successful general-purpose edit guarantee.
+
+## Local Web Dashboard
+
+The Phase 12 Dashboard replaces manual curl/Thunder Client inspection with a local browser workflow while keeping the backend as the security authority:
+
+```text
+Browser -> React Dashboard -> Central API client -> Express backend
+    -> Router / Agent execution / Evaluator / Candidate review
+    -> Explicit Human Approve or Reject
+```
+
+The SPA provides six focused sections:
+
+- **Dashboard** shows backend and Ollama health, the canonical model, Agent availability, recent tasks, and real performance summaries when history exists.
+- **Run Task** accepts a multi-line task plus a server-side workspace path, displays deterministic router classification/ranking, and sends either the existing Auto Agent or sequential competition request.
+- **Candidates** retrieves fresh Phase 10 review evidence, displays tracked diff as escaped text, lists untracked paths separately, and requires confirmation for fingerprint-bound approval or rejection.
+- **History** browses bounded SQLite task metadata and Agent runs without implying that raw stdout or diffs were stored.
+- **Performance** shows global, recent, and category-weighted Agent statistics from existing Phase 9 endpoints.
+- **System** gives a read-only view of local models, Agent host detection, effective runtime, and sandbox capability.
+
+The Dashboard does not enable Agent execution, change configuration, install models/Agents, push Git remotes, or make backend approval decisions. An evaluation pass and a competition winner remain candidate evidence—not a merge. Approval sends exactly the fingerprint returned by the current review and never retries a conflict automatically. A `candidate_changed`, `stale_base`, dirty-target, or wrong-branch conflict requires the human to refresh and review again.
+
+Phase 12 intentionally uses ordinary HTTP request/response loading states. It does not include SSE, WebSockets, live Agent output, job cancellation, or a task queue. Those are later-phase concerns.

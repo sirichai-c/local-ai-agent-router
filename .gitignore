@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+web/node_modules/
+web/dist/
+web/.vite/
+web/coverage/
 
 # Local environment files
 .env

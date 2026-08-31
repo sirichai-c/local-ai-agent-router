@@ -326,3 +326,47 @@ Live validation proved Qwen Code could create an untracked file in its candidate
 Git worktrees isolate repository state but do not themselves sandbox processes. Phase 11 therefore uses both worktree and container boundaries. If the explicit host backend is selected, Windows process-tree termination is still best effort and OS isolation is not provided.
 
 The final `qwen3:8b` validation completed a bounded single-write documentation task. Multi-tool existing-file edits were not consistently reliable with Qwen Code 0.22.3 because the model sometimes interpreted a tool result as a new instruction, so this phase does not claim reliable general-purpose editing for that model and CLI combination.
+
+## Local Dashboard boundary
+
+```text
+                         Browser
+                            |
+                            v
+                      React Dashboard
+                            |
+                            v
+                  Central request API client
+                            |
+                            v
+                     Express Backend
+                            |
+        +-------------------+--------------------+
+        |                   |                    |
+        v                   v                    v
+      Router             History             System
+        |
+        v
+    Agent Execution
+        |
+        v
+     Evaluator
+        |
+        v
+    Candidate Review
+        |
+   +----+----+
+   v         v
+ Reject    Approve exact fingerprint
+             |
+             v
+         Local Git merge
+```
+
+The browser is a presentation client, not a new trust boundary. It submits only the existing task, workspace, known Agent IDs, task IDs, and reviewed fingerprint fields. Backend registry validation, execution gates, sandbox policy, candidate selection, fresh fingerprint calculation, target checks, idempotency, and merge authorization remain unchanged.
+
+The frontend API layer normalizes safe error messages and distinguishes invalid requests, missing resources, state conflicts, server failures, and backend connectivity failures. Diff and task strings are rendered as React text nodes; the application has no `dangerouslySetInnerHTML`, runtime HTML injection, remote scripts, or frontend secrets. Large tracked diffs are previewed conservatively, while untracked paths remain a separate evidence section because the tracked diff does not contain their contents.
+
+Express registers `/health` and all `/api/*` routes before optional frontend static serving. When `web/dist/index.html` exists, ordinary GET navigation paths receive the SPA entry point. Unknown API paths still return the structured JSON 404 and are never swallowed by the SPA fallback. When the build is absent, API startup and behavior are unchanged.
+
+Phase 12 has no event channel. Long-running Agent and competition requests remain pending HTTP requests with an explicit loading state and duplicate-submit prevention. No EventSource, WebSocket, live stdout, queue, cancellation, or retry workflow is introduced.
