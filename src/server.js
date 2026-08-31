@@ -1,5 +1,6 @@
 const { createApp } = require('./app');
 const { config } = require('./config/env');
+const { databaseService } = require('./services/database.service');
 
 const app = createApp();
 const server = app.listen(config.port, () => {
@@ -15,6 +16,8 @@ function shutdown(signal) {
   console.log(`${signal} received; closing HTTP server`);
 
   server.close((error) => {
+    databaseService.close();
+
     if (error) {
       console.error('Failed to close HTTP server:', error.message);
       process.exitCode = 1;

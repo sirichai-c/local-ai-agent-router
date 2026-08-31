@@ -2,6 +2,7 @@ const {
   agentRegistryService,
 } = require('./agent-registry.service');
 const { agentScorerService } = require('./agent-scorer.service');
+const { adaptiveScorerService } = require('./adaptive-scorer.service');
 const { taskClassifierService } = require('./task-classifier.service');
 
 class RouterService {
@@ -9,13 +10,15 @@ class RouterService {
     classifier = taskClassifierService,
     registry = agentRegistryService,
     scorer = agentScorerService,
+    adaptiveScorer = adaptiveScorerService,
   } = {}) {
     this.classifier = classifier;
     this.registry = registry;
     this.scorer = scorer;
+    this.adaptiveScorer = adaptiveScorer;
   }
 
-  toRankingEntry(agent, scoring) {
+  toRankingEntry(agent, staticScoring, adaptiveScoring) {
     return {
       id: agent.id,
       name: agent.name,
@@ -25,8 +28,13 @@ class RouterService {
       executablePath: agent.executablePath,
       executionCommand: agent.executionCommand,
       executionArgs: [...(agent.executionArgs || [])],
-      score: scoring.score,
-      reasons: scoring.reasons,
+      score: adaptiveScoring.score,
+      staticScore: adaptiveScoring.staticScore,
+      historicalScore: adaptiveScoring.historicalScore,
+      recentScore: adaptiveScoring.recentScore,
+      sampleSize: adaptiveScoring.sampleSize,
+      adaptive: adaptiveScoring.adaptive,
+      reasons: staticScoring.reasons,
     };
   }
 
@@ -38,15 +46,22 @@ class RouterService {
     const normalizedInput = task.trim();
     const classification = this.classifier.classifyTask(normalizedInput);
     const agents = await this.registry.getAgents();
-    const ranking = agents
-      .map((agent, registryIndex) => {
-        const scoring = this.scorer.scoreAgent(agent, classification);
+    const scoredAgents = await Promise.all(
+      agents.map(async (agent, registryIndex) => {
+        const staticScoring = this.scorer.scoreAgent(agent, classification);
+        const adaptiveScoring = await this.adaptiveScorer.scoreAgentWithHistory({
+          agent,
+          staticScore: staticScoring.score,
+          classification,
+        });
 
         return {
-          ...this.toRankingEntry(agent, scoring),
+          ...this.toRankingEntry(agent, staticScoring, adaptiveScoring),
           registryIndex,
         };
-      })
+      }),
+    );
+    const ranking = scoredAgents
       .sort((left, right) => (
         right.score - left.score || left.registryIndex - right.registryIndex
       ))

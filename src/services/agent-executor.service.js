@@ -9,9 +9,13 @@ const {
   RepositoryValidationError,
   gitService,
 } = require('./git.service');
+const {
+  HistoryPersistenceError,
+  historyService,
+} = require('./history.service');
 const { processRunnerService } = require('./process-runner.service');
 const { routerService } = require('./router.service');
-const { worktreeService } = require('./worktree.service');
+const { createTaskId, worktreeService } = require('./worktree.service');
 const { evaluatorService } = require('./evaluator.service');
 
 function mapExecutionStatus({ processResult, autoCommitDetected, verdict }) {
@@ -43,10 +47,12 @@ class AgentExecutorService {
     worktrees = worktreeService,
     runner = processRunnerService,
     evaluator = evaluatorService,
+    history = historyService,
     executionEnabled = config.agentExecution.enabled,
     model = config.ollama.model,
     ollamaBaseUrl = config.ollama.baseUrl,
     clock = () => new Date(),
+    idFactory = createTaskId,
   } = {}) {
     this.router = router;
     this.adapterResolver = adapterResolver;
@@ -55,10 +61,12 @@ class AgentExecutorService {
     this.worktrees = worktrees;
     this.runner = runner;
     this.evaluator = evaluator;
+    this.history = history;
     this.executionEnabled = executionEnabled;
     this.model = model;
     this.ollamaBaseUrl = ollamaBaseUrl;
     this.clock = clock;
+    this.idFactory = idFactory;
   }
 
   async validateRepository(workspace) {
@@ -110,6 +118,68 @@ class AgentExecutorService {
     return this.executionEnabled === true;
   }
 
+  async createSingleHistoryTask({ taskId, task, repository, classification }) {
+    try {
+      await this.history.createTask({
+        id: taskId,
+        task,
+        workspace: repository.repo,
+        mode: 'single',
+        classification,
+      });
+    } catch (error) {
+      throw new HistoryPersistenceError(
+        'Unable to create the single-agent history record.',
+        error,
+      );
+    }
+  }
+
+  async persistSingleResult({ taskId, agent, result }) {
+    const errors = [];
+
+    try {
+      await this.history.recordExecutionResult({ taskId, agent, result });
+    } catch {
+      errors.push('agent_run');
+    }
+
+    try {
+      await this.history.completeTask(taskId, result.status);
+    } catch {
+      errors.push('task_completion');
+    }
+
+    return errors.length === 0
+      ? { persisted: true, taskId }
+      : {
+        persisted: false,
+        taskId,
+        error: {
+          code: 'HISTORY_PERSISTENCE_FAILED',
+          message: 'Agent changes were preserved, but history persistence was incomplete.',
+          failedOperations: errors,
+        },
+      };
+  }
+
+  async persistSingleFailure({ taskId, agent, error }) {
+    const context = error?.candidateContext || {};
+    const failedResult = {
+      status: 'failed',
+      selectedAgent: agent,
+      execution: null,
+      evaluation: { score: null, verdict: 'fail' },
+      changes: { count: 0 },
+      workspace: {
+        branch: context.branch || null,
+        worktree: context.worktreePath || null,
+      },
+    };
+
+    return this.persistSingleResult({ taskId, agent, result: failedResult });
+  }
+
   async executeTask({ task, workspace }) {
     const analysis = await this.router.analyzeTask(task);
 
@@ -130,13 +200,38 @@ class AgentExecutorService {
     }
 
     const repository = await this.validateRepository(workspace);
+    const taskId = this.idFactory();
 
-    return this.executeWithAgent({
+    await this.createSingleHistoryTask({
+      taskId,
       task: analysis.task,
-      agent: analysis.selectedAgent,
       repository,
       classification: analysis.classification,
     });
+
+    try {
+      const result = await this.executeWithAgent({
+        task: analysis.task,
+        agent: analysis.selectedAgent,
+        repository,
+        taskId,
+        classification: analysis.classification,
+      });
+      const history = await this.persistSingleResult({
+        taskId,
+        agent: analysis.selectedAgent,
+        result,
+      });
+
+      return { ...result, history };
+    } catch (error) {
+      error.history = await this.persistSingleFailure({
+        taskId,
+        agent: analysis.selectedAgent,
+        error,
+      });
+      throw error;
+    }
   }
 
   async executeWithAgent({

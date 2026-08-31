@@ -169,6 +169,58 @@ After every run, the existing Phase 7 evaluator supplies a 0-100 quality score. 
 
 Candidate results retain untracked-file evidence separately from tracked-diff metadata. No synthetic full patch is created, so the architecture does not imply that `git diff` contains untracked content. Candidate branches and worktrees remain after the response. Phase 8 performs no commit, merge, approval, or automatic cleanup.
 
+## Persistent history and adaptive routing
+
+```text
+                   Task
+                    |
+             Task Classifier
+                    |
+        +-----------+-----------+
+        |                       |
+        v                       v
+ Static Capability         SQLite History
+        |                 +-----+-----+
+        |                 |           |
+        |                 v           v
+        |             Category      Recent
+        |             History       History
+        |                 |           |
+        +-----------------+-----------+
+                          |
+                          v
+                    Adaptive Scorer
+                          |
+                          v
+                      Agent Ranking
+                          |
+                          v
+                       Execution
+                          |
+                          v
+                       Evaluator
+                          |
+                          v
+                   Persistent History
+```
+
+The database service owns one lazily opened application-level `better-sqlite3` connection. File databases use WAL mode, foreign keys, a busy timeout, and an idempotent version-1 schema. The history service wraps task plus category creation in a transaction and uses prepared statements for every value originating outside the static schema. Runtime `.db`, `.db-shm`, and `.db-wal` files are never committed.
+
+The schema stores one `tasks` record for each actual enabled single execution or competition, nonzero classification weights in `task_categories`, and one metadata-only `agent_runs` record per attempted Agent. Output, diffs, source content, environment data, and secrets are not persisted. Analyze, plan, execution-disabled, and insufficient-competitor requests do not pollute history.
+
+Performance queries include failures: a failed process with no evaluator score contributes zero quality instead of disappearing from reliability statistics. Category performance uses one category row per task and distinct run IDs, with each evaluation weighted by that task's category score. Recent performance takes the latest configured number of distinct runs.
+
+The adaptive scorer starts with the existing static score. Category and recent components become eligible only after the configured minimum sample count; missing categories are ignored rather than treated as zero. Available configured weights are renormalized, the result is clamped to 0-100, and deterministic tie-breaking remains unchanged. Static priors stay in configuration and are never self-modified.
+
+Competition analysis remains a snapshot. It analyzes once and keeps those routing scores through every candidate run. Candidate history is written only after all executions and comparison complete, so newly stored results affect future tasks rather than changing the current contest midway.
+
+History and performance requests retain the normal layered flow:
+
+```text
+History / performance route -> Controller -> Service
+    -> Prepared SQLite query -> Structured metadata response
+```
+
 Git worktrees isolate repository state but do not sandbox the host process. A live Qwen Code run demonstrated this by writing a hallucinated absolute path outside the worktree; the artifact was removed and Qwen execution now uses its installed Docker sandbox. OpenCode and Aider remain host-backed in Phase 6, process-tree termination on Windows is best effort, and Phase 11 will introduce the generalized sandbox backend.
 
 The final `qwen3:8b` validation completed a bounded single-write documentation task. Multi-tool existing-file edits were not consistently reliable with Qwen Code 0.22.3 because the model sometimes interpreted a tool result as a new instruction, so this phase does not claim reliable general-purpose editing for that model and CLI combination.

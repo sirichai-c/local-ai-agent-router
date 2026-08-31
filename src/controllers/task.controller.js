@@ -7,6 +7,9 @@ const {
   CompetitionValidationError,
   competitionService,
 } = require('../services/competition.service');
+const {
+  HistoryPersistenceError,
+} = require('../services/history.service');
 
 function sendValidationError(response, error) {
   if (error instanceof WorkspaceValidationError) {
@@ -22,6 +25,14 @@ function sendValidationError(response, error) {
 
   if (error instanceof CompetitionValidationError) {
     response.status(400).json({ error: error.message, code: error.code });
+    return true;
+  }
+
+  if (error instanceof HistoryPersistenceError) {
+    response.status(500).json({
+      error: error.message,
+      code: error.code,
+    });
     return true;
   }
 

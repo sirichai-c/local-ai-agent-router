@@ -218,3 +218,40 @@ test('POST /api/tasks/compete respects the default execution gate', async () => 
   assert.equal(body.competitionId, null);
   assert.deepEqual(body.candidates, []);
 });
+
+test('GET /api/history/tasks returns bounded metadata-only history', async () => {
+  const response = await fetch(`${baseUrl}/api/history/tasks?limit=20`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(Array.isArray(body.tasks), true);
+  assert.equal(body.count, body.tasks.length);
+  assert.equal(body.count, 0);
+
+  const invalidResponse = await fetch(`${baseUrl}/api/history/tasks?limit=101`);
+  assert.equal(invalidResponse.status, 400);
+  assert.equal((await invalidResponse.json()).code, 'INVALID_HISTORY_LIMIT');
+});
+
+test('GET /api/history/tasks/:id returns a controlled 404', async () => {
+  const response = await fetch(`${baseUrl}/api/history/tasks/not-present`);
+
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).code, 'HISTORY_TASK_NOT_FOUND');
+});
+
+test('performance APIs validate agent IDs and task categories', async () => {
+  const unknownAgent = await fetch(
+    `${baseUrl}/api/performance/agents/not-present`,
+  );
+  assert.equal(unknownAgent.status, 404);
+
+  const unknownCategory = await fetch(
+    `${baseUrl}/api/performance/agents/opencode/categories/not-a-category`,
+  );
+  assert.equal(unknownCategory.status, 400);
+  assert.equal(
+    (await unknownCategory.json()).code,
+    'UNKNOWN_TASK_CATEGORY',
+  );
+});

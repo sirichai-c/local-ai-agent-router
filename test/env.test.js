@@ -5,9 +5,11 @@ const {
   config,
   parseCompetitionExecutionMode,
   parseBoolean,
+  parseDatabasePath,
   parseNonNegativeNumber,
   parseOptionalPath,
   parsePositiveInteger,
+  validateAdaptiveWeights,
   validateCompetitionWeights,
 } = require('../src/config/env');
 
@@ -62,6 +64,24 @@ test('competition configuration rejects unsafe modes and invalid weights', () =>
   );
   assert.throws(
     () => validateCompetitionWeights({ quality: 0.5, router: 0.5, speed: 0.5 }),
+    /sum to 1.0/,
+  );
+});
+
+test('adaptive routing configuration uses deterministic validated defaults', () => {
+  assert.equal(config.database.path, ':memory:');
+  assert.equal(config.adaptiveRouting.enabled, true);
+  assert.deepEqual(config.adaptiveRouting.weights, {
+    static: 0.5,
+    history: 0.3,
+    recent: 0.2,
+  });
+  assert.equal(config.adaptiveRouting.minSamples, 3);
+  assert.equal(config.adaptiveRouting.recentSampleSize, 10);
+  assert.equal(parseDatabasePath(undefined), './data/agent-router.db');
+  assert.throws(() => parseDatabasePath('   '), /non-empty string/);
+  assert.throws(
+    () => validateAdaptiveWeights({ static: 0.5, history: 0.5, recent: 0.5 }),
     /sum to 1.0/,
   );
 });

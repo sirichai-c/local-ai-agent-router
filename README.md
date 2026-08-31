@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 8 adds deterministic multi-agent competition. Available agents can solve the same task from the same base commit in separate Git worktrees, after which their Phase 7 evaluations, router suitability, and relative speed are compared. The winner remains an uncommitted candidate: history, approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
+Phase 9 adds persistent performance memory and deterministic adaptive routing. Completed single-Agent and competition runs are recorded as metadata in local SQLite storage, and future routing can blend static capability priors with category-specific and recent performance. Winners remain uncommitted candidates: approvals, merging, and generalized agent sandboxing will be added incrementally in later phases.
 
 ## Requirements
 
@@ -45,6 +45,13 @@ COMPETITION_EXECUTION_MODE=sequential
 COMPETITION_QUALITY_WEIGHT=0.70
 COMPETITION_ROUTER_WEIGHT=0.20
 COMPETITION_SPEED_WEIGHT=0.10
+DATABASE_PATH=./data/agent-router.db
+ADAPTIVE_ROUTING_ENABLED=true
+ADAPTIVE_STATIC_WEIGHT=0.50
+ADAPTIVE_HISTORY_WEIGHT=0.30
+ADAPTIVE_RECENT_WEIGHT=0.20
+ADAPTIVE_MIN_SAMPLES=3
+ADAPTIVE_RECENT_SAMPLE_SIZE=10
 ```
 
 ## Commands
@@ -108,7 +115,7 @@ Task → Rule-based classification → Agent capability scoring → Ranking
 
 The classifier matches maintainable English and Thai keyword rules across ten task categories. If no rule matches, it applies a conservative `coding: 40` fallback so the result remains deterministic and useful.
 
-Capability numbers are initial heuristic routing priors, not objective benchmarks or official performance measurements. Historical performance will refine them in a later phase.
+Capability numbers are initial heuristic routing priors, not objective benchmarks or official performance measurements. Phase 9 retains these priors as the largest configured routing component and uses local historical evidence only as an explainable adjustment.
 
 `recommendedAgent` is the best theoretical match regardless of installation state. `selectedAgent` is the highest-scoring agent currently available on the local `PATH`, or `null` if none are available.
 
@@ -270,6 +277,42 @@ The response preserves each candidate's evaluation, changed and untracked paths,
 
 The winner is only the best current candidate according to deterministic evidence. Phase 8 does not commit, merge, approve, or delete any candidate branch/worktree. Cleanup remains manual until the approval workflow is implemented.
 
+## Persistent Performance Memory
+
+```text
+Agent does work -> Evaluator gives score -> SQLite remembers metadata
+    -> Future router combines static + category history + recent history
+```
+
+Phase 9 records actual enabled execution attempts from both `POST /api/tasks/execute` and `POST /api/tasks/compete`. Analyze, plan, execution-disabled, and insufficient-competitor requests do not create history because no Agent ran. A competition creates one task record and one run record per candidate after all candidates have finished, so Agent A's result cannot change the routing scores already captured for Agent B in the same competition.
+
+The SQLite database defaults to `./data/agent-router.db`. Its parent directory is created at runtime, WAL and foreign-key enforcement are enabled, and schema initialization is idempotent. Database, WAL, and shared-memory files are ignored by Git. The database stores task text, local workspace paths, nonzero task-category scores, execution/evaluation scores, statuses, durations, branches, and worktree paths. It deliberately does not store Agent stdout, stderr, raw diffs, file contents, secrets, or environment values.
+
+Adaptive routing exposes four related values:
+
+- `staticScore` is the Phase 4 capability-prior compatibility score.
+- `historicalScore` is a task-category-weighted average from categories with at least `ADAPTIVE_MIN_SAMPLES` distinct runs.
+- `recentScore` is the average quality of the Agent's latest configured number of runs, including failed runs as zero-quality evidence when no evaluation score exists.
+- `score` is the effective routing score. It combines available components using the configured weights and renormalizes when a history component is missing.
+
+Cold start is conservative. If adaptive routing is disabled or neither category nor recent history has enough samples, `score` equals `staticScore` and `adaptive` is `false`. Missing category history is excluded rather than treated as zero. Static configuration is never rewritten by observed results.
+
+### `GET /api/history/tasks`
+
+Returns recent execution tasks with a default limit of 20 and a maximum of 100. Use `?limit=N` for a bounded result.
+
+### `GET /api/history/tasks/:id`
+
+Returns one task, its stored nonzero classification categories, and metadata-only Agent runs. Unknown task IDs return HTTP 404.
+
+### `GET /api/performance/agents/:id`
+
+Returns registry metadata plus global and recent statistics for one known Agent. Statistics separate successful execution status from evaluator pass, warning, and failure rates.
+
+### `GET /api/performance/agents/:id/categories/:category`
+
+Returns category-weighted evaluation performance, pass rate, and average duration for one of the ten known task categories. Distinct Agent runs determine sample size, so multi-category tasks are not counted multiple times.
+
 ## Current architecture
 
 ```text
@@ -295,7 +338,7 @@ Agent route → Agent controller → Agent registry service
     → Command detection utility → Operating system PATH
 ```
 
-Task routing adds another deterministic service branch:
+Task routing adds another deterministic, history-aware service branch. The existing static scorer runs first, then the adaptive scorer consults SQLite category and recent performance before producing the effective ranking:
 
 ```text
 Router route → Router controller → Router service
@@ -331,6 +374,13 @@ POST /api/tasks/compete -> Task controller -> Competition service
     -> NO COMMIT / NO MERGE / NO CLEANUP
 ```
 
+Actual execution results feed the local history store after evaluation:
+
+```text
+Execution / competition -> Evaluator result -> History service -> SQLite
+    -> Performance service -> Future adaptive routing
+```
+
 `src/app.js` assembles the HTTP application without opening a network port. `src/server.js` is the process entry point and owns startup and graceful shutdown. Keeping those responsibilities separate makes the API easier to test.
 
 ## Security baseline
@@ -353,6 +403,8 @@ POST /api/tasks/compete -> Task controller -> Competition service
 - Project scripts are detected but not run on the host during Phase 7.
 - Competition accepts only Agent IDs resolved from the registry; HTTP callers cannot supply an executable command.
 - All competitors start from one captured commit and execute sequentially in separate worktrees.
+- SQLite statements use bound parameters, runtime database files are ignored by Git, and history stores metadata rather than Agent output or code content.
+- Adaptive routing is statistical and deterministic; it never asks an LLM to interpret history or mutates static capability priors.
 
 Git worktrees isolate source-control state, not the operating-system process. Qwen Code receives an additional Docker filesystem boundary in Phase 6 because live validation proved that prompt instructions and `cwd` do not prevent an agent from choosing an external absolute path. OpenCode and Aider still use host execution when explicitly enabled, and best-effort Windows process termination may not kill every descendant process. Phase 11 will replace this agent-specific safeguard with a generalized sandbox execution backend.
 

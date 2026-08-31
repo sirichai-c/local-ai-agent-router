@@ -6,6 +6,13 @@ const {
   RepositoryValidationError,
 } = require('../src/services/agent-executor.service');
 const { GitCommandError } = require('../src/services/git.service');
+const {
+  HistoryPersistenceError,
+  HistoryService,
+} = require('../src/services/history.service');
+const {
+  createTemporaryDatabase,
+} = require('../test-support/database-test.helper');
 
 const repo = 'C:\\Projects\\disposable';
 const worktreePath = 'C:\\Projects\\.agent-worktrees\\disposable\\task-opencode';
@@ -60,11 +67,11 @@ function createService(overrides = {}) {
     workspaceResolver: async () => repo,
     git,
     worktrees: {
-      create: async () => ({
-        taskId: 'task123',
+      create: async (input) => ({
+        taskId: input.taskId || 'task123',
         repo,
         worktreePath,
-        branch: 'agent/task123-opencode',
+        branch: `agent/${input.taskId || 'task123'}-opencode`,
         baseCommit,
       }),
     },
@@ -86,6 +93,11 @@ function createService(overrides = {}) {
         summary: { changedFileCount: 1 },
       }),
     },
+    history: {
+      createTask: async () => {},
+      recordExecutionResult: async () => 1,
+      completeTask: async () => {},
+    },
     executionEnabled: true,
     model: 'qwen3:8b',
     ollamaBaseUrl: 'http://localhost:11434',
@@ -96,6 +108,7 @@ function createService(overrides = {}) {
       ];
       return () => times.shift();
     })(),
+    idFactory: () => 'task123',
     ...serviceOverrides,
   });
 }
@@ -389,4 +402,79 @@ test('forced-agent execution does not reroute and reuses caller task ID', async 
   assert.equal(worktreeInput.agentId, 'qwen-code');
   assert.equal(result.selectedAgent.id, 'qwen-code');
   assert.equal(result.workspace.branch, 'agent/competition123-qwen-code');
+});
+
+test('single-agent execution persists one task and one run to SQLite', async (t) => {
+  const { database } = await createTemporaryDatabase(t);
+  const history = new HistoryService({ database });
+  const service = createService({ history });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+  const stored = history.getTaskById(result.taskId);
+
+  assert.equal(result.history.persisted, true);
+  assert.equal(stored.mode, 'single');
+  assert.equal(stored.status, 'completed');
+  assert.equal(stored.runs.length, 1);
+  assert.equal(stored.runs[0].agentId, 'opencode');
+  assert.equal(stored.runs[0].evaluationScore, 100);
+  assert.equal(stored.runs[0].competitionScore, null);
+});
+
+test('disabled single-agent execution does not create history', async () => {
+  let createCalls = 0;
+  const service = createService({
+    executionEnabled: false,
+    history: {
+      createTask: async () => {
+        createCalls += 1;
+      },
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'execution_disabled');
+  assert.equal(createCalls, 0);
+});
+
+test('post-execution history failure reports clearly and preserves candidate result', async () => {
+  const service = createService({
+    history: {
+      createTask: async () => {},
+      recordExecutionResult: async () => {
+        throw new Error('simulated database failure');
+      },
+      completeTask: async () => {},
+    },
+  });
+
+  const result = await service.executeTask({ task: 'safe task', workspace: repo });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.workspace.worktree, worktreePath);
+  assert.equal(result.history.persisted, false);
+  assert.equal(result.history.error.code, 'HISTORY_PERSISTENCE_FAILED');
+});
+
+test('pre-execution history failure prevents worktree creation', async () => {
+  let worktreeCreated = false;
+  const service = createService({
+    history: {
+      createTask: async () => {
+        throw new Error('simulated database failure');
+      },
+    },
+    worktrees: {
+      create: async () => {
+        worktreeCreated = true;
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.executeTask({ task: 'safe task', workspace: repo }),
+    (error) => error instanceof HistoryPersistenceError,
+  );
+  assert.equal(worktreeCreated, false);
 });

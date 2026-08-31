@@ -3,6 +3,10 @@ const {
   competitionEvaluator,
 } = require('../evaluators/competition.evaluator');
 const { agentExecutorService } = require('./agent-executor.service');
+const {
+  HistoryPersistenceError,
+  historyService,
+} = require('./history.service');
 const { routerService } = require('./router.service');
 const { createTaskId } = require('./worktree.service');
 
@@ -47,7 +51,7 @@ function normalizeAgentIds(agentIds) {
   return normalized;
 }
 
-function toCandidateResult(result, routerScore) {
+function toCandidateResult(result, agent) {
   const trackedDiff = result.evaluation?.diff || {};
 
   return {
@@ -55,7 +59,10 @@ function toCandidateResult(result, routerScore) {
       id: result.selectedAgent.id,
       name: result.selectedAgent.name,
     },
-    routerScore,
+    routerScore: agent.score,
+    staticScore: agent.staticScore ?? agent.score,
+    adaptiveScore: agent.adaptive ? agent.score : null,
+    adaptive: agent.adaptive ?? false,
     status: result.status,
     durationMs: result.execution?.durationMs ?? null,
     branch: result.workspace?.branch ?? null,
@@ -77,12 +84,15 @@ function toCandidateResult(result, routerScore) {
   };
 }
 
-function toFailedCandidate(agent, routerScore, repository, error) {
+function toFailedCandidate(agent, repository, error) {
   const context = error?.candidateContext || {};
 
   return {
     agent: { id: agent.id, name: agent.name },
-    routerScore,
+    routerScore: agent.score,
+    staticScore: agent.staticScore ?? agent.score,
+    adaptiveScore: agent.adaptive ? agent.score : null,
+    adaptive: agent.adaptive ?? false,
     status: 'failed',
     durationMs: null,
     branch: context.branch || null,
@@ -113,6 +123,7 @@ class CompetitionService {
     router = routerService,
     executor = agentExecutorService,
     evaluator = competitionEvaluator,
+    history = historyService,
     maxAgents = config.competition.maxAgents,
     executionMode = config.competition.executionMode,
     idFactory = createTaskId,
@@ -128,6 +139,7 @@ class CompetitionService {
     this.router = router;
     this.executor = executor;
     this.evaluator = evaluator;
+    this.history = history;
     this.maxAgents = maxAgents;
     this.executionMode = executionMode;
     this.idFactory = idFactory;
@@ -163,6 +175,76 @@ class CompetitionService {
     return analysis.ranking
       .filter((agent) => agent.available)
       .slice(0, this.maxAgents);
+  }
+
+  async createCompetitionHistoryTask({
+    competitionId,
+    analysis,
+    repository,
+  }) {
+    try {
+      await this.history.createTask({
+        id: competitionId,
+        task: analysis.task,
+        workspace: repository.repo,
+        mode: 'competition',
+        classification: analysis.classification,
+      });
+    } catch (error) {
+      throw new HistoryPersistenceError(
+        'Unable to create the competition history record.',
+        error,
+      );
+    }
+  }
+
+  async persistCompetitionResults({
+    competitionId,
+    selectedAgents,
+    candidates,
+    comparison,
+  }) {
+    const errors = [];
+    const scoresByAgentId = new Map(
+      comparison.ranking.map((entry) => [
+        entry.agentId,
+        entry.competitionScore,
+      ]),
+    );
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      const agent = selectedAgents[index];
+
+      try {
+        await this.history.recordExecutionResult({
+          taskId: competitionId,
+          agent,
+          result: candidate,
+          competitionScore: scoresByAgentId.get(agent.id) ?? null,
+        });
+      } catch {
+        errors.push(`agent_run:${agent.id}`);
+      }
+    }
+
+    try {
+      await this.history.completeTask(competitionId, comparison.status);
+    } catch {
+      errors.push('task_completion');
+    }
+
+    return errors.length === 0
+      ? { persisted: true, taskId: competitionId }
+      : {
+        persisted: false,
+        taskId: competitionId,
+        error: {
+          code: 'HISTORY_PERSISTENCE_FAILED',
+          message: 'Competition candidates were preserved, but history persistence was incomplete.',
+          failedOperations: errors,
+        },
+      };
   }
 
   async compete({ task, workspace, agentIds }) {
@@ -212,6 +294,12 @@ class CompetitionService {
     const competitionId = this.idFactory();
     const candidates = [];
 
+    await this.createCompetitionHistoryTask({
+      competitionId,
+      analysis,
+      repository,
+    });
+
     // Deliberately sequential: local agents share one Ollama/GPU runtime.
     for (const agent of selectedAgents) {
       try {
@@ -222,11 +310,10 @@ class CompetitionService {
           taskId: competitionId,
           classification: analysis.classification,
         });
-        candidates.push(toCandidateResult(result, agent.score));
+        candidates.push(toCandidateResult(result, agent));
       } catch (error) {
         candidates.push(toFailedCandidate(
           agent,
-          agent.score,
           repository,
           error,
         ));
@@ -234,6 +321,12 @@ class CompetitionService {
     }
 
     const comparison = this.evaluator.evaluate(candidates);
+    const history = await this.persistCompetitionResults({
+      competitionId,
+      selectedAgents,
+      candidates,
+      comparison,
+    });
 
     return {
       status: comparison.status,
@@ -251,6 +344,7 @@ class CompetitionService {
       candidates,
       ranking: comparison.ranking,
       winner: comparison.winner,
+      history,
     };
   }
 }

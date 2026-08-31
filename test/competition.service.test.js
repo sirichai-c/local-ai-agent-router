@@ -6,6 +6,13 @@ const {
   CompetitionValidationError,
   normalizeAgentIds,
 } = require('../src/services/competition.service');
+const {
+  HistoryPersistenceError,
+  HistoryService,
+} = require('../src/services/history.service');
+const {
+  createTemporaryDatabase,
+} = require('../test-support/database-test.helper');
 
 const baseCommit = 'a'.repeat(40);
 const repo = 'C:\\Projects\\competition-repo';
@@ -67,11 +74,17 @@ function createHarness({
   analysis = analysisWith(),
   maxAgents = 3,
   execute,
+  history,
 } = {}) {
   const calls = {
     analyze: 0,
     validate: 0,
     execute: [],
+    history: {
+      create: [],
+      runs: [],
+      complete: [],
+    },
   };
   const executor = {
     isExecutionEnabled: () => enabled,
@@ -94,6 +107,11 @@ function createHarness({
       return successfulResult(input.agent, input.taskId);
     },
   };
+  const defaultHistory = {
+    createTask: async (input) => calls.history.create.push(input),
+    recordExecutionResult: async (input) => calls.history.runs.push(input),
+    completeTask: async (...input) => calls.history.complete.push(input),
+  };
   const service = new CompetitionService({
     router: {
       analyzeTask: async () => {
@@ -102,6 +120,7 @@ function createHarness({
       },
     },
     executor,
+    history: history || defaultHistory,
     maxAgents,
     executionMode: 'sequential',
     idFactory: () => 'competition123',
@@ -328,4 +347,93 @@ test('agent list normalization is defensive and deterministic', () => {
   ]);
   assert.throws(() => normalizeAgentIds('opencode'), /must be an array/);
   assert.throws(() => normalizeAgentIds(['']), /non-empty string/);
+});
+
+test('competition persists one task and one run per candidate to SQLite', async (t) => {
+  const { database } = await createTemporaryDatabase(t);
+  const history = new HistoryService({ database });
+  const { service } = createHarness({ history });
+
+  const result = await service.compete({ task: 'task', workspace: repo });
+  const stored = history.getTaskById(result.competitionId);
+
+  assert.equal(result.history.persisted, true);
+  assert.equal(stored.mode, 'competition');
+  assert.equal(stored.status, 'completed');
+  assert.equal(stored.runs.length, 2);
+  assert.deepEqual(
+    stored.runs.map((run) => run.agentId),
+    ['opencode', 'qwen-code'],
+  );
+  assert.ok(stored.runs.every((run) => run.competitionScore !== null));
+});
+
+test('competition routing scores stay frozen until every candidate finishes', async () => {
+  const events = [];
+  const routing = [agent('opencode', 92), agent('qwen-code', 90)];
+  const history = {
+    createTask: async () => events.push('history:create'),
+    recordExecutionResult: async ({ agent: runAgent }) => {
+      events.push(`history:run:${runAgent.id}`);
+      routing[1].score = 1;
+    },
+    completeTask: async () => events.push('history:complete'),
+  };
+  const { service } = createHarness({
+    analysis: analysisWith(routing),
+    history,
+    execute: async (input) => {
+      events.push(`execute:${input.agent.id}:${input.agent.score}`);
+      return successfulResult(input.agent, input.taskId);
+    },
+  });
+
+  const result = await service.compete({ task: 'task', workspace: repo });
+
+  assert.deepEqual(events, [
+    'history:create',
+    'execute:opencode:92',
+    'execute:qwen-code:90',
+    'history:run:opencode',
+    'history:run:qwen-code',
+    'history:complete',
+  ]);
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.routerScore),
+    [92, 90],
+  );
+});
+
+test('competition reports persistence errors without deleting candidates', async () => {
+  const { service } = createHarness({
+    history: {
+      createTask: async () => {},
+      recordExecutionResult: async () => {
+        throw new Error('simulated database failure');
+      },
+      completeTask: async () => {},
+    },
+  });
+
+  const result = await service.compete({ task: 'task', workspace: repo });
+
+  assert.equal(result.history.persisted, false);
+  assert.equal(result.candidates.length, 2);
+  assert.ok(result.candidates.every((candidate) => candidate.worktree));
+});
+
+test('competition history creation failure prevents candidate execution', async () => {
+  const { calls, service } = createHarness({
+    history: {
+      createTask: async () => {
+        throw new Error('simulated database failure');
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.compete({ task: 'task', workspace: repo }),
+    (error) => error instanceof HistoryPersistenceError,
+  );
+  assert.equal(calls.execute.length, 0);
 });

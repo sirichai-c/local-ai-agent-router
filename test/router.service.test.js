@@ -24,6 +24,16 @@ function createRouter(availableAgentIds = ['opencode']) {
     registry: {
       getAgents: async () => agents,
     },
+    adaptiveScorer: {
+      scoreAgentWithHistory: async ({ staticScore }) => ({
+        score: staticScore,
+        staticScore,
+        historicalScore: null,
+        recentScore: null,
+        sampleSize: 0,
+        adaptive: false,
+      }),
+    },
   });
 }
 
@@ -65,6 +75,8 @@ for (const routingCase of routingCases) {
     assert.equal(result.ranking.length, 3);
     assert.ok(result.ranking[0].score >= result.ranking[1].score);
     assert.ok(result.ranking.every((agent) => agent.reasons.length <= 3));
+    assert.ok(result.ranking.every((agent) => agent.score === agent.staticScore));
+    assert.ok(result.ranking.every((agent) => agent.adaptive === false));
   });
 }
 

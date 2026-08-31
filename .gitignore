@@ -16,9 +16,10 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Runtime data (introduced in later phases)
+# Runtime SQLite data
 data/*.db
-data/*.db-*
+data/*.db-shm
+data/*.db-wal
 
 # Temporary agent and sandbox state (introduced in later phases)
 .worktrees/

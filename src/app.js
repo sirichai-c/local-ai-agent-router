@@ -2,7 +2,9 @@ const express = require('express');
 
 const agentRoutes = require('./routes/agent.routes');
 const healthRoutes = require('./routes/health.routes');
+const historyRoutes = require('./routes/history.routes');
 const ollamaRoutes = require('./routes/ollama.routes');
+const performanceRoutes = require('./routes/performance.routes');
 const routerRoutes = require('./routes/router.routes');
 const taskRoutes = require('./routes/task.routes');
 
@@ -15,6 +17,8 @@ function createApp() {
   app.use(healthRoutes);
   app.use('/api', ollamaRoutes);
   app.use('/api/agents', agentRoutes);
+  app.use('/api/history', historyRoutes);
+  app.use('/api/performance', performanceRoutes);
   app.use('/api/router', routerRoutes);
   app.use('/api/tasks', taskRoutes);
 

@@ -14,6 +14,12 @@ const DEFAULT_COMPETITION_EXECUTION_MODE = 'sequential';
 const DEFAULT_COMPETITION_QUALITY_WEIGHT = 0.70;
 const DEFAULT_COMPETITION_ROUTER_WEIGHT = 0.20;
 const DEFAULT_COMPETITION_SPEED_WEIGHT = 0.10;
+const DEFAULT_DATABASE_PATH = './data/agent-router.db';
+const DEFAULT_ADAPTIVE_STATIC_WEIGHT = 0.50;
+const DEFAULT_ADAPTIVE_HISTORY_WEIGHT = 0.30;
+const DEFAULT_ADAPTIVE_RECENT_WEIGHT = 0.20;
+const DEFAULT_ADAPTIVE_MIN_SAMPLES = 3;
+const DEFAULT_ADAPTIVE_RECENT_SAMPLE_SIZE = 10;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -76,6 +82,20 @@ function parseOptionalPath(value) {
   return value?.trim() || null;
 }
 
+function parseDatabasePath(value) {
+  if (value === undefined) {
+    return DEFAULT_DATABASE_PATH;
+  }
+
+  const databasePath = value.trim();
+
+  if (!databasePath) {
+    throw new Error('DATABASE_PATH must be a non-empty string');
+  }
+
+  return databasePath;
+}
+
 function parseNonNegativeNumber(value, defaultValue, variableName) {
   if (value === undefined || value === '') {
     return defaultValue;
@@ -112,6 +132,16 @@ function validateCompetitionWeights(weights, tolerance = 1e-9) {
   return Object.freeze(weights);
 }
 
+function validateAdaptiveWeights(weights, tolerance = 1e-9) {
+  const total = weights.static + weights.history + weights.recent;
+
+  if (Math.abs(total - 1) > tolerance) {
+    throw new Error('Adaptive routing weights must sum to 1.0');
+  }
+
+  return Object.freeze(weights);
+}
+
 const competitionWeights = validateCompetitionWeights({
   quality: parseNonNegativeNumber(
     process.env.COMPETITION_QUALITY_WEIGHT,
@@ -127,6 +157,24 @@ const competitionWeights = validateCompetitionWeights({
     process.env.COMPETITION_SPEED_WEIGHT,
     DEFAULT_COMPETITION_SPEED_WEIGHT,
     'COMPETITION_SPEED_WEIGHT',
+  ),
+});
+
+const adaptiveWeights = validateAdaptiveWeights({
+  static: parseNonNegativeNumber(
+    process.env.ADAPTIVE_STATIC_WEIGHT,
+    DEFAULT_ADAPTIVE_STATIC_WEIGHT,
+    'ADAPTIVE_STATIC_WEIGHT',
+  ),
+  history: parseNonNegativeNumber(
+    process.env.ADAPTIVE_HISTORY_WEIGHT,
+    DEFAULT_ADAPTIVE_HISTORY_WEIGHT,
+    'ADAPTIVE_HISTORY_WEIGHT',
+  ),
+  recent: parseNonNegativeNumber(
+    process.env.ADAPTIVE_RECENT_WEIGHT,
+    DEFAULT_ADAPTIVE_RECENT_WEIGHT,
+    'ADAPTIVE_RECENT_WEIGHT',
   ),
 });
 
@@ -177,17 +225,36 @@ const config = Object.freeze({
     ),
     weights: competitionWeights,
   }),
+  database: Object.freeze({
+    path: parseDatabasePath(process.env.DATABASE_PATH),
+  }),
+  adaptiveRouting: Object.freeze({
+    enabled: parseBoolean(process.env.ADAPTIVE_ROUTING_ENABLED, true),
+    weights: adaptiveWeights,
+    minSamples: parsePositiveInteger(
+      process.env.ADAPTIVE_MIN_SAMPLES,
+      DEFAULT_ADAPTIVE_MIN_SAMPLES,
+      'ADAPTIVE_MIN_SAMPLES',
+    ),
+    recentSampleSize: parsePositiveInteger(
+      process.env.ADAPTIVE_RECENT_SAMPLE_SIZE,
+      DEFAULT_ADAPTIVE_RECENT_SAMPLE_SIZE,
+      'ADAPTIVE_RECENT_SAMPLE_SIZE',
+    ),
+  }),
 });
 
 module.exports = {
   config,
   parseBaseUrl,
   parseBoolean,
+  parseDatabasePath,
   parseModel,
   parseCompetitionExecutionMode,
   parseNonNegativeNumber,
   parseOptionalPath,
   parsePort,
   parsePositiveInteger,
+  validateAdaptiveWeights,
   validateCompetitionWeights,
 };
