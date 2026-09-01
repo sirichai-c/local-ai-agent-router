@@ -491,3 +491,69 @@ test('pre-execution history failure prevents worktree creation', async () => {
   );
   assert.equal(worktreeCreated, false);
 });
+
+test('optional realtime reporting follows the actual single-agent pipeline without raw output', async () => {
+  const events = [];
+  const service = createService({
+    runner: {
+      runProcess: async (invocation) => ({
+        ...invocation,
+        exitCode: 0,
+        timedOut: false,
+        outputTruncated: false,
+        stdout: 'SECRET_TOKEN=abc123',
+        stderr: '-----BEGIN PRIVATE KEY-----',
+        error: null,
+      }),
+    },
+    evaluator: {
+      evaluateAgentResult: async ({ onEvent }) => {
+        onEvent({
+          type: 'static_check',
+          stage: 'evaluation',
+          status: 'completed',
+          messageKey: 'run.staticCheck',
+          data: { checkType: 'javascript-syntax', file: 'README.md', passed: true },
+        });
+        onEvent({
+          type: 'sandbox_check_completed',
+          stage: 'evaluation',
+          status: 'completed',
+          messageKey: 'run.sandboxCheckCompleted',
+          data: { check: 'test', network: 'none', passed: true },
+        });
+        return {
+          score: 100,
+          verdict: 'pass',
+          summary: { changedFileCount: 1 },
+        };
+      },
+    },
+  });
+  const result = await service.executeTask({
+    task: '<script>alert(1)</script>',
+    workspace: repo,
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(events.map((event) => event.type), [
+    'router_analyzing',
+    'router_completed',
+    'repository_validating',
+    'repository_validated',
+    'worktree_creating',
+    'worktree_created',
+    'agent_starting',
+    'agent_running',
+    'agent_completed',
+    'evaluation_starting',
+    'static_check',
+    'sandbox_check_completed',
+    'evaluation_completed',
+  ]);
+  const serialized = JSON.stringify(events);
+  assert.equal(serialized.includes('SECRET_TOKEN'), false);
+  assert.equal(serialized.includes('PRIVATE KEY'), false);
+  assert.equal(serialized.includes('<script>'), false);
+});

@@ -379,4 +379,40 @@ The frontend API layer normalizes safe error messages and distinguishes invalid 
 
 Express registers `/health` and all `/api/*` routes before optional frontend static serving. When `web/dist/index.html` exists, ordinary GET navigation paths receive the SPA entry point. Unknown API paths still return the structured JSON 404 and are never swallowed by the SPA fallback. When the build is absent, API startup and behavior are unchanged.
 
-Phase 12 has no event channel. Long-running Agent and competition requests remain pending HTTP requests with an explicit loading state and duplicate-submit prevention. No EventSource, WebSocket, live stdout, queue, cancellation, or retry workflow is introduced.
+## Real-time execution boundary
+
+```text
+                    Browser
+                       |
+                 POST Start Run
+                       |
+                       v
+                 Runtime Session
+                       |
+          +------------+------------+
+          |                         |
+          v                         v
+    Execution Pipeline          SSE Stream
+          |                         |
+          |                         v
+          |                   React Dashboard
+          |                         |
+          v                         |
+       Router -------- safe event --+
+          |                         |
+       Agent --------- safe event --+
+          |                         |
+      Worktree ------- safe event --+
+          |                         |
+      Evaluator ------ safe event --+
+          |                         |
+      Candidate ------ safe event --+
+```
+
+`RunCoordinatorService` creates an immediately executing in-memory session and passes an optional domain-event callback into the existing Agent Executor, Competition Service, and Evaluator. Those services do not know about HTTP or SSE; synchronous callers omit the callback and retain their Phase 1–12 behavior. The SSE controller only serializes validated session events with `JSON.stringify`.
+
+Each session has a cryptographically random runtime ID, one of the existing single/competition execution types, a stable stage, a bounded event history, and a safe final summary. Event data excludes task prose, raw stdout/stderr, diff content, fingerprint values, environment data, and stack traces. Project-sandbox events report only the fixed check name, execution state, network policy, result, and duration metadata. Transport disconnect never terminates the underlying Agent.
+
+SSE clients can reconnect with `Last-Event-ID`. The bounded history replays newer events; if the requested range has expired, the server sends a safe current snapshot. Finished sessions expire from memory after the configured TTL, while Phase 9 History remains the persistent record. Runtime sessions are not jobs: Phase 13 has no queue, retry, priority, scheduling, cancellation, persistent recovery, or server-restart recovery.
+
+The React `useRunStream` hook owns EventSource lifecycle, snapshot loading, reconnect state, deduplication, and the frontend event cap. The Run Session renders live structured Activity, timeline, evaluation, and sequential competition progress. Raw live terminal output remains withheld because its sensitivity cannot be established safely before evaluation. Candidate review and Human Approval remain the separate Phase 10 fingerprint-bound boundary.

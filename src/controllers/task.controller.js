@@ -197,4 +197,5 @@ module.exports = {
   executeTask,
   getCandidate,
   rejectTask,
+  sendValidationError,
 };

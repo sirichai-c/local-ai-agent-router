@@ -52,9 +52,11 @@ function createHarness({ installResult, scriptResults = {} } = {}) {
 
 test('sandbox project evaluator runs test, lint, and build deterministically', async () => {
   const harness = createHarness();
+  const events = [];
   const result = await harness.evaluator.evaluate({
     workspace: '/candidate',
     scripts: { test: 'x', lint: 'x', build: 'x' },
+    onEvent: (event) => events.push(event),
   });
 
   assert.equal(result.dependencyInstall.passed, true);
@@ -66,6 +68,21 @@ test('sandbox project evaluator runs test, lint, and build deterministically', a
   assert.ok(harness.calls.slice(1).every((call) => call.network === 'none'));
   assert.ok(Object.values(result.scripts).every((check) => check.passed));
   assert.equal(harness.wasCleaned(), true);
+  assert.deepEqual(events.map((event) => `${event.type}:${event.data.check}`), [
+    'sandbox_check_started:dependency-install',
+    'sandbox_check_completed:dependency-install',
+    'sandbox_check_started:test',
+    'sandbox_check_completed:test',
+    'sandbox_check_started:lint',
+    'sandbox_check_completed:lint',
+    'sandbox_check_started:build',
+    'sandbox_check_completed:build',
+  ]);
+  assert.ok(events.filter((event) => event.type === 'sandbox_check_started')
+    .slice(1)
+    .every((event) => event.data.network === 'none'));
+  assert.equal(JSON.stringify(events).includes('stdout'), false);
+  assert.equal(JSON.stringify(events).includes('stderr'), false);
 });
 
 test('failed and timed-out project scripts retain separate evidence', async () => {

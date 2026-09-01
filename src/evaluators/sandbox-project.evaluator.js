@@ -43,6 +43,24 @@ function createSkippedScript(available, reason) {
   };
 }
 
+function reportSandboxEvent(onEvent, type, data, status = 'running') {
+  if (typeof onEvent !== 'function') return;
+
+  try {
+    onEvent({
+      type,
+      stage: 'evaluation',
+      status,
+      messageKey: type === 'sandbox_check_started'
+        ? 'run.sandboxCheckStarted'
+        : 'run.sandboxCheckCompleted',
+      data,
+    });
+  } catch {
+    // Optional observability cannot alter sandbox evaluation.
+  }
+}
+
 class SandboxProjectEvaluator {
   constructor({
     snapshots = sandboxSnapshotService,
@@ -127,7 +145,7 @@ class SandboxProjectEvaluator {
     return toExecutionResult(`npm-${scriptName}`, result);
   }
 
-  async evaluate({ workspace, scripts = {} }) {
+  async evaluate({ workspace, scripts = {}, onEvent }) {
     const availableScripts = Object.fromEntries(SCRIPT_ORDER.map((name) => [
       name,
       typeof scripts[name] === 'string' && scripts[name].trim() !== '',
@@ -176,7 +194,22 @@ class SandboxProjectEvaluator {
 
     try {
       snapshot = await this.snapshots.create(workspace);
+      if (this.installDependencies) {
+        reportSandboxEvent(onEvent, 'sandbox_check_started', {
+          check: 'dependency-install',
+          network: 'bridge',
+        });
+      }
       const dependencyInstall = await this.install(snapshot);
+      if (this.installDependencies) {
+        reportSandboxEvent(onEvent, 'sandbox_check_completed', {
+          check: 'dependency-install',
+          network: dependencyInstall.network || 'bridge',
+          executed: dependencyInstall.executed,
+          passed: dependencyInstall.passed,
+          timedOut: dependencyInstall.timedOut === true,
+        }, dependencyInstall.passed === false ? 'failed' : 'completed');
+      }
       const scriptResults = {};
 
       for (const scriptName of SCRIPT_ORDER) {
@@ -193,7 +226,18 @@ class SandboxProjectEvaluator {
           continue;
         }
 
+        reportSandboxEvent(onEvent, 'sandbox_check_started', {
+          check: scriptName,
+          network: 'none',
+        });
         scriptResults[scriptName] = await this.runScript(snapshot, scriptName);
+        reportSandboxEvent(onEvent, 'sandbox_check_completed', {
+          check: scriptName,
+          network: scriptResults[scriptName].network,
+          executed: true,
+          passed: scriptResults[scriptName].passed,
+          timedOut: scriptResults[scriptName].timedOut,
+        }, scriptResults[scriptName].passed ? 'completed' : 'failed');
       }
 
       return {
@@ -250,4 +294,5 @@ module.exports = {
   processSucceeded,
   sandboxProjectEvaluator,
   toExecutionResult,
+  reportSandboxEvent,
 };

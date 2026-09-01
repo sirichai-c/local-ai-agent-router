@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
 const { test } = require('node:test');
 
 const {
@@ -14,14 +15,21 @@ const {
   CompetitionService,
 } = require('../src/services/competition.service');
 const { gitService } = require('../src/services/git.service');
+const {
+  RunCoordinatorService,
+} = require('../src/services/run-coordinator.service');
+const { RunSessionService } = require('../src/services/run-session.service');
 
 const runLive = process.env.RUN_AGENT_SANDBOX_TESTS === 'true';
 
-async function createRepository(prefix) {
+async function createRepository(prefix, { withReadme = true } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   const repo = path.join(root, 'source');
   await fs.mkdir(repo);
-  await fs.writeFile(path.join(repo, 'README.md'), '# Sandbox Fixture\n');
+  await fs.writeFile(
+    path.join(repo, withReadme ? 'README.md' : 'BASE.txt'),
+    withReadme ? '# Sandbox Fixture\n' : 'Disposable real-time fixture\n',
+  );
   await gitService.runGit(['init', '-b', 'main'], repo);
   await gitService.runGit(['config', 'user.name', 'Phase 11 Test'], repo);
   await gitService.runGit(
@@ -71,6 +79,105 @@ async function assertNoSandboxContainers(taskId) {
   assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.trim(), '');
 }
+
+async function waitForTerminalSession(sessions, runId, timeoutMs = 300_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snapshot = sessions.snapshot(runId);
+    if (snapshot && ['completed', 'failed'].includes(snapshot.state)) return snapshot;
+    await delay(500);
+  }
+  throw new Error('Timed out waiting for the real-time Agent session');
+}
+
+test('live real-time Agent creates an isolated README candidate and safe lifecycle', {
+  skip: !runLive,
+  timeout: 900_000,
+}, async (t) => {
+  assert.equal(process.env.AGENT_EXECUTION_BACKEND, 'docker');
+  const fixture = await createRepository('lar-agent-realtime-live-', { withReadme: false });
+  const selectedAgent = await agentRegistryService.getAgentById('qwen-code');
+  const agent = { ...selectedAgent, score: 100, staticScore: 100 };
+  const executor = new AgentExecutorService({
+    executionEnabled: true,
+    history: {
+      createTask: async () => {},
+      recordExecutionResult: async () => {},
+      completeTask: async () => {},
+    },
+    router: {
+      analyzeTask: async (task) => ({
+        task,
+        classification: { coding: 100, smallChange: 100 },
+        selectedAgent: agent,
+        recommendedAgent: agent,
+        ranking: [agent],
+      }),
+    },
+  });
+  let result;
+  const sessions = new RunSessionService({ startCleanupTimer: false });
+  const coordinator = new RunCoordinatorService({
+    sessions,
+    executor: {
+      isExecutionEnabled: () => executor.isExecutionEnabled(),
+      assertExecutionBackendAvailable: (...args) => (
+        executor.assertExecutionBackendAvailable(...args)
+      ),
+      executeTask: async (input) => {
+        result = await executor.executeTask(input);
+        return result;
+      },
+    },
+  });
+
+  t.after(async () => {
+    sessions.close();
+    if (result?.workspace?.worktree) await cleanupCandidates(fixture.repo, [result]);
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
+
+  const accepted = await coordinator.startSingle({
+    task: "Add a section named Real-Time Validation to README.md only. Use the write_file tool exactly once to create /workspace/README.md containing '# Real-Time Validation' followed by one short validation sentence. Do not read or modify any other file, do not commit or merge, and stop immediately after the write succeeds.",
+    workspace: fixture.repo,
+  });
+  const snapshot = await waitForTerminalSession(sessions, accepted.id);
+  const events = sessions.eventsAfter(accepted.id);
+  const types = events.map((event) => event.type);
+
+  assert.equal(accepted.state, 'starting');
+  assert.equal(snapshot.state, 'completed', JSON.stringify({
+    error: snapshot.error,
+    status: result?.status,
+    timedOut: result?.execution?.timedOut,
+  }));
+  assert.ok(['completed', 'completed_with_warnings'].includes(result.status));
+  assert.ok(result.changes.untrackedFiles.includes('README.md'));
+  assert.match(
+    await fs.readFile(path.join(result.workspace.worktree, 'README.md'), 'utf8'),
+    /Real-Time Validation/u,
+  );
+  assert.equal(result.workspace.headCommit, result.workspace.baseCommit);
+  assert.equal(result.changes.autoCommitDetected, false);
+  assert.equal(await gitService.isClean(fixture.repo), true);
+  await assert.rejects(() => fs.stat(path.join(fixture.repo, 'README.md')), { code: 'ENOENT' });
+  for (const required of [
+    'run_started', 'router_analyzing', 'router_completed',
+    'repository_validating', 'repository_validated',
+    'worktree_creating', 'worktree_created',
+    'agent_starting', 'agent_running', 'agent_completed',
+    'evaluation_starting', 'evaluation_completed',
+    'candidate_ready', 'run_completed',
+  ]) assert.ok(types.includes(required), `Missing real-time event: ${required}`);
+  assert.deepEqual(events.map((event) => event.id), events.map((_, index) => index + 1));
+  assert.equal(new Set(events.map((event) => event.id)).size, events.length);
+  const serialized = JSON.stringify({ events, snapshot });
+  assert.equal(serialized.includes('stdout'), false);
+  assert.equal(serialized.includes('stderr'), false);
+  assert.equal(serialized.includes('candidateFingerprint'), false);
+  assert.equal(serialized.includes('trackedDiff'), false);
+  await assertNoSandboxContainers(result.taskId);
+});
 
 test('live Qwen Code runs inside Docker and preserves the candidate worktree', {
   skip: !runLive,

@@ -445,3 +445,30 @@ test('competition history creation failure prevents candidate execution', async 
   );
   assert.equal(calls.execute.length, 0);
 });
+
+test('realtime competition events preserve sequential Phase 8 semantics after a candidate fails', async () => {
+  const realtime = [];
+  const { service } = createHarness({
+    execute: async (input) => {
+      if (input.agent.id === 'opencode') throw new Error('simulated candidate failure');
+      return successfulResult(input.agent, input.taskId);
+    },
+  });
+  const result = await service.compete({
+    task: 'task',
+    workspace: repo,
+    onEvent: (event) => realtime.push(event),
+  });
+  const candidateEvents = realtime
+    .filter((event) => event.type.startsWith('competition_candidate'))
+    .map((event) => `${event.type}:${event.data.agentId}:${event.status}`);
+
+  assert.deepEqual(candidateEvents, [
+    'competition_candidate_starting:opencode:running',
+    'competition_candidate_completed:opencode:failed',
+    'competition_candidate_starting:qwen-code:running',
+    'competition_candidate_completed:qwen-code:completed',
+  ]);
+  assert.equal(result.candidates.length, 2);
+  assert.equal(realtime.at(-1).type, 'competition_ranking');
+});

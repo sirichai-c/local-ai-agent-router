@@ -25,6 +25,33 @@ describe('API client', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ task: 'Improve README', workspace: 'C:\\repo', agents: ['opencode', 'qwen-code'] });
   });
 
+  it('starts a real-time single run and loads its snapshot', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ runId: 'run-1', state: 'starting' }, { status: 202 }))
+      .mockResolvedValueOnce(response({ id: 'run-1', state: 'running' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiClient.startExecution({ task: 'Fix validation', workspace: 'C:\\repo' });
+    await apiClient.getRun('run-1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/runs/execute');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      task: 'Fix validation',
+      workspace: 'C:\\repo',
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/runs/run-1');
+  });
+
+  it('starts a real-time competition with the explicit Agent list', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ runId: 'run-2' }, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiClient.startCompetition({
+      task: 'Improve README',
+      workspace: 'C:\\repo',
+      agents: ['qwen-code', 'opencode'],
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/runs/compete');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).agents).toEqual(['qwen-code', 'opencode']);
+  });
+
   it('passes candidate fingerprint exactly in approve body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({ status: 'merged' }));
     vi.stubGlobal('fetch', fetchMock);

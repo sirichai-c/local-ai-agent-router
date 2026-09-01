@@ -49,6 +49,16 @@ function mapExecutionStatus({ processResult, autoCommitDetected, verdict }) {
   return 'evaluation_failed';
 }
 
+function reportExecutionEvent(onEvent, event) {
+  if (typeof onEvent !== 'function') return;
+
+  try {
+    onEvent(event);
+  } catch {
+    // Optional observability cannot alter the execution pipeline.
+  }
+}
+
 class AgentExecutorService {
   constructor({
     router = routerService,
@@ -210,12 +220,34 @@ class AgentExecutorService {
     return this.persistSingleResult({ taskId, agent, result: failedResult });
   }
 
-  async executeTask({ task, workspace }) {
+  async executeTask({ task, workspace, onEvent }) {
     if (this.isExecutionEnabled()) {
       await this.assertExecutionBackendAvailable();
     }
 
+    reportExecutionEvent(onEvent, {
+      type: 'router_analyzing',
+      stage: 'routing',
+      status: 'running',
+      messageKey: 'run.routerAnalyzing',
+      data: {},
+    });
     const analysis = await this.router.analyzeTask(task);
+    reportExecutionEvent(onEvent, {
+      type: 'router_completed',
+      stage: 'routing',
+      status: 'completed',
+      messageKey: 'run.routerCompleted',
+      data: {
+        selectedAgentId: analysis.selectedAgent?.id || null,
+        classification: analysis.classification,
+        ranking: (analysis.ranking || []).map((agent) => ({
+          agentId: agent.id,
+          score: agent.score,
+          available: agent.available,
+        })),
+      },
+    });
 
     if (!analysis.selectedAgent) {
       return {
@@ -233,7 +265,24 @@ class AgentExecutorService {
       };
     }
 
+    reportExecutionEvent(onEvent, {
+      type: 'repository_validating',
+      stage: 'repository',
+      status: 'running',
+      messageKey: 'run.repositoryValidating',
+      data: {},
+    });
     const repository = await this.validateRepository(workspace);
+    reportExecutionEvent(onEvent, {
+      type: 'repository_validated',
+      stage: 'repository',
+      status: 'completed',
+      messageKey: 'run.repositoryValidated',
+      data: {
+        targetBranch: repository.targetBranch,
+        baseCommit: repository.baseCommit,
+      },
+    });
     const taskId = this.idFactory();
 
     await this.createSingleHistoryTask({
@@ -250,6 +299,7 @@ class AgentExecutorService {
         repository,
         taskId,
         classification: analysis.classification,
+        onEvent,
       });
       const history = await this.persistSingleResult({
         taskId,
@@ -274,6 +324,7 @@ class AgentExecutorService {
     repository,
     taskId,
     classification = {},
+    onEvent,
   }) {
     if (!this.isExecutionEnabled()) {
       return {
@@ -300,12 +351,27 @@ class AgentExecutorService {
 
     await this.assertExecutionBackendAvailable(agent.id);
 
+    reportExecutionEvent(onEvent, {
+      type: 'worktree_creating',
+      stage: 'worktree',
+      status: 'running',
+      messageKey: 'run.worktreeCreating',
+      data: { agentId: agent.id },
+    });
     const worktree = await this.worktrees.create({
       repo: repository.repo,
       agentId: agent.id,
       baseCommit: repository.baseCommit,
       taskId,
     });
+    reportExecutionEvent(onEvent, {
+      type: 'worktree_created',
+      stage: 'worktree',
+      status: 'completed',
+      messageKey: 'run.worktreeCreated',
+      data: { agentId: agent.id, branch: worktree.branch },
+    });
+    let agentTerminalEventEmitted = false;
 
     try {
       const runtimeInput = this.executionBackend.createAdapterInput(
@@ -322,7 +388,21 @@ class AgentExecutorService {
       const invocation = typeof adapter.prepareExecution === 'function'
         ? await adapter.prepareExecution(invocationPlan)
         : invocationPlan;
+      reportExecutionEvent(onEvent, {
+        type: 'agent_starting',
+        stage: 'agent',
+        status: 'running',
+        messageKey: 'run.agentStarting',
+        data: { agentId: agent.id },
+      });
       const startedAt = this.clock();
+      reportExecutionEvent(onEvent, {
+        type: 'agent_running',
+        stage: 'agent',
+        status: 'running',
+        messageKey: 'run.agentRunning',
+        data: { agentId: agent.id },
+      });
       const processResult = await this.executionBackend.run({
         invocation,
         agent,
@@ -330,6 +410,21 @@ class AgentExecutorService {
         ollamaBaseUrl: this.ollamaBaseUrl,
       });
       const finishedAt = this.clock();
+      const processSucceeded = processResult.exitCode === 0
+        && !processResult.timedOut;
+      reportExecutionEvent(onEvent, {
+        type: processSucceeded ? 'agent_completed' : 'agent_failed',
+        stage: 'agent',
+        status: processSucceeded ? 'completed' : 'failed',
+        messageKey: processSucceeded ? 'run.agentCompleted' : 'run.agentFailed',
+        data: {
+          agentId: agent.id,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          exitCode: processResult.exitCode,
+          timedOut: processResult.timedOut,
+        },
+      });
+      agentTerminalEventEmitted = true;
       const [worktreeHead, changedFiles, diff, untrackedFiles] = await Promise.all([
         this.git.getHeadCommit(worktree.worktreePath),
         this.git.getChangedFiles(worktree.worktreePath),
@@ -337,6 +432,13 @@ class AgentExecutorService {
         this.git.getUntrackedFiles(worktree.worktreePath),
       ]);
       const autoCommitDetected = worktreeHead !== repository.baseCommit;
+      reportExecutionEvent(onEvent, {
+        type: 'evaluation_starting',
+        stage: 'evaluation',
+        status: 'running',
+        messageKey: 'run.evaluationStarting',
+        data: { agentId: agent.id },
+      });
       const evaluation = await this.evaluator.evaluateAgentResult({
         workspace: worktree.worktreePath,
         execution: processResult,
@@ -345,6 +447,18 @@ class AgentExecutorService {
         trackedDiff: diff,
         untrackedFiles,
         unexpectedCommit: autoCommitDetected,
+        onEvent,
+      });
+      reportExecutionEvent(onEvent, {
+        type: 'evaluation_completed',
+        stage: 'evaluation',
+        status: evaluation.verdict === 'fail' ? 'failed' : 'completed',
+        messageKey: 'run.evaluationCompleted',
+        data: {
+          agentId: agent.id,
+          score: evaluation.score,
+          verdict: evaluation.verdict,
+        },
       });
       let status = mapExecutionStatus({
         processResult,
@@ -422,6 +536,15 @@ class AgentExecutorService {
         evaluation,
       };
     } catch (error) {
+      if (!agentTerminalEventEmitted) {
+        reportExecutionEvent(onEvent, {
+          type: 'agent_failed',
+          stage: 'agent',
+          status: 'failed',
+          messageKey: 'run.agentFailed',
+          data: { agentId: agent.id },
+        });
+      }
       error.candidateContext = {
         taskId: worktree.taskId,
         worktreePath: worktree.worktreePath,
@@ -442,4 +565,5 @@ module.exports = {
   WorkspaceValidationError,
   agentExecutorService,
   mapExecutionStatus,
+  reportExecutionEvent,
 };

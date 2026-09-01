@@ -98,6 +98,16 @@ export const apiClient = {
     workspace,
     ...(agents ? { agents } : {}),
   }),
+  startExecution: ({ task, workspace }) => post('/api/runs/execute', {
+    task,
+    workspace,
+  }),
+  startCompetition: ({ task, workspace, agents }) => post('/api/runs/compete', {
+    task,
+    workspace,
+    ...(agents ? { agents } : {}),
+  }),
+  getRun: (runId) => request(`/api/runs/${encodeURIComponent(runId)}`),
   getCandidate: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/candidate`),
   approveCandidate: (taskId, expectedFingerprint) => post(
     `/api/tasks/${encodeURIComponent(taskId)}/approve`,

@@ -566,11 +566,11 @@ The SPA is a quiet, developer-focused Agent Control Center with a persistent sid
 
 Thai is the first-run language and English can be selected with the `TH | EN` control. Light is the first-run theme; Dark and System themes are also available. These non-sensitive preferences are stored locally in the browser. The global detail switch follows a deliberate **Simple -> Advanced** architecture: Simple shows the task, selected Agent, outcome, evaluation, changed files, diff, and human decision; Advanced additionally reveals routing components, adaptive state, branch/worktree, commits, fingerprint, sandbox evidence, and execution metadata. Security warnings remain visible in both modes.
 
-The Run Session uses a final-evidence timeline and Activity/Terminal tabs. Agent output is labelled unverified, while Evaluator results are labelled verified system evidence. This is a request/response view—not simulated live output.
+The Run Session uses a live evidence timeline and Activity/Terminal tabs. Structured Router, repository, worktree, Agent lifecycle, sandbox-check, Evaluator, competition, and candidate-ready events arrive through SSE. Agent output remains labelled unverified, while Evaluator results are labelled verified system evidence.
 
 The Dashboard does not enable Agent execution, change configuration, install models/Agents, push Git remotes, or make backend approval decisions. An evaluation pass and a competition winner remain candidate evidence—not a merge. Approval sends exactly the fingerprint returned by the current review and never retries a conflict automatically. A `candidate_changed`, `stale_base`, dirty-target, or wrong-branch conflict requires the human to refresh and review again.
 
-Phase 12 intentionally uses ordinary HTTP request/response loading states. It does not include SSE, WebSockets, live Agent output, job cancellation, or a task queue. Those are later-phase concerns.
+The interactive Dashboard starts work through the Phase 13 real-time APIs. Existing synchronous task APIs remain available for earlier clients. Phase 13 does not add job cancellation, retry, scheduling, priority, persistence, or a task queue.
 
 Dashboard development:
 
@@ -591,3 +591,34 @@ npm start
 ```
 
 Then open `http://localhost:3000`. Express serves `web/dist` when present while retaining JSON behavior for `/health`, all `/api/*` routes, and unknown API routes.
+
+## Real-Time Execution
+
+Phase 13 makes the existing execution pipeline observable without duplicating it or turning it into a job manager:
+
+```text
+Browser -- POST /api/runs/execute or /compete --> Runtime session
+   |                                                   |
+   +<-------------- SSE lifecycle events -------------+
+                                                       |
+                                               Existing pipeline
+                                         Router -> Agent -> Evaluator
+                                                       |
+                                               Candidate / History
+```
+
+The start request validates the existing execution policy, creates an in-memory session, starts the Agent immediately, and returns HTTP 202 with a runtime `runId`. The Dashboard then opens `GET /api/runs/:runId/events` with `EventSource`; `GET /api/runs/:runId` provides the current safe snapshot for refresh and reconnect handling. Existing `POST /api/tasks/execute` and `POST /api/tasks/compete` behavior is unchanged.
+
+Events have sequential IDs, a stable stage, a translation `messageKey`, and small structured data. The browser translates the same event into Thai or English. Reconnection uses SSE `Last-Event-ID`; missed bounded events are replayed, or a current session snapshot is returned when the requested window has expired. Heartbeats keep an idle connection alive without appearing in the activity feed. Multiple browser tabs observe one session and never start duplicate Agents.
+
+Runtime memory is bounded by:
+
+- `REALTIME_EVENT_LIMIT=300` per session
+- `REALTIME_SESSION_TTL_MS=1800000` for finished sessions
+- `REALTIME_HEARTBEAT_MS=15000` per SSE connection
+
+These sessions are deliberately ephemeral. A server restart loses the live runtime session, while completed task metadata remains available through the Phase 9 SQLite History. There is no queue, retry, cancellation, priority, scheduling, or restart recovery in Phase 13.
+
+Raw Agent stdout and stderr are **not streamed live**. They can contain secrets or sensitive file content before the Evaluator has applied its policy. The Activity tab therefore receives trusted system-generated lifecycle evidence only, and the Terminal tab explains that live output is withheld. SSE events and snapshots exclude raw output, tracked diff content, candidate fingerprints, environment values, and stack traces. Candidate review and exact-fingerprint approval continue through the Phase 10 endpoints and never happen automatically.
+
+The opt-in Phase 13 live validation used the canonical `qwen3:8b` model and Qwen Code inside the existing Docker Agent sandbox. It created only `README.md` in a disposable candidate worktree, produced ordered unique lifecycle events through evaluation and `candidate_ready`, left the original repository clean and uncommitted, performed no merge or remote push, and removed the temporary sandbox after completion.

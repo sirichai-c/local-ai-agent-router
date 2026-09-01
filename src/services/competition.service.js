@@ -2,7 +2,10 @@ const { config } = require('../config/env');
 const {
   competitionEvaluator,
 } = require('../evaluators/competition.evaluator');
-const { agentExecutorService } = require('./agent-executor.service');
+const {
+  agentExecutorService,
+  reportExecutionEvent,
+} = require('./agent-executor.service');
 const {
   HistoryPersistenceError,
   historyService,
@@ -253,7 +256,7 @@ class CompetitionService {
       };
   }
 
-  async compete({ task, workspace, agentIds }) {
+  async compete({ task, workspace, agentIds, onEvent }) {
     const normalizedAgentIds = normalizeAgentIds(agentIds);
 
     if (normalizedAgentIds && normalizedAgentIds.length > this.maxAgents) {
@@ -279,7 +282,29 @@ class CompetitionService {
       await this.executor.assertExecutionBackendAvailable();
     }
 
+    reportExecutionEvent(onEvent, {
+      type: 'router_analyzing',
+      stage: 'routing',
+      status: 'running',
+      messageKey: 'run.routerAnalyzing',
+      data: {},
+    });
     const analysis = await this.router.analyzeTask(task);
+    reportExecutionEvent(onEvent, {
+      type: 'router_completed',
+      stage: 'routing',
+      status: 'completed',
+      messageKey: 'run.routerCompleted',
+      data: {
+        selectedAgentId: analysis.selectedAgent?.id || null,
+        classification: analysis.classification,
+        ranking: (analysis.ranking || []).map((agent) => ({
+          agentId: agent.id,
+          score: agent.score,
+          available: agent.available,
+        })),
+      },
+    });
     const selectedAgents = this.selectCandidates(analysis, normalizedAgentIds);
 
     if (selectedAgents.length < 2) {
@@ -300,7 +325,31 @@ class CompetitionService {
       };
     }
 
+    reportExecutionEvent(onEvent, {
+      type: 'competition_started',
+      stage: 'competition',
+      status: 'running',
+      messageKey: 'run.competitionStarted',
+      data: { agentIds: selectedAgents.map((agent) => agent.id) },
+    });
+    reportExecutionEvent(onEvent, {
+      type: 'repository_validating',
+      stage: 'repository',
+      status: 'running',
+      messageKey: 'run.repositoryValidating',
+      data: {},
+    });
     const repository = await this.executor.validateRepository(workspace);
+    reportExecutionEvent(onEvent, {
+      type: 'repository_validated',
+      stage: 'repository',
+      status: 'completed',
+      messageKey: 'run.repositoryValidated',
+      data: {
+        targetBranch: repository.targetBranch,
+        baseCommit: repository.baseCommit,
+      },
+    });
     const competitionId = this.idFactory();
     const candidates = [];
 
@@ -312,6 +361,13 @@ class CompetitionService {
 
     // Deliberately sequential: local agents share one Ollama/GPU runtime.
     for (const agent of selectedAgents) {
+      reportExecutionEvent(onEvent, {
+        type: 'competition_candidate_starting',
+        stage: 'competition',
+        status: 'running',
+        messageKey: 'run.competitionCandidateStarting',
+        data: { agentId: agent.id },
+      });
       try {
         const result = await this.executor.executeWithAgent({
           task: analysis.task,
@@ -319,18 +375,50 @@ class CompetitionService {
           repository,
           taskId: competitionId,
           classification: analysis.classification,
+          onEvent,
         });
-        candidates.push(toCandidateResult(result, agent));
+        const candidate = toCandidateResult(result, agent);
+        candidates.push(candidate);
+        reportExecutionEvent(onEvent, {
+          type: 'competition_candidate_completed',
+          stage: 'competition',
+          status: candidate.status === 'failed' ? 'failed' : 'completed',
+          messageKey: 'run.competitionCandidateCompleted',
+          data: {
+            agentId: agent.id,
+            status: candidate.status,
+            score: candidate.evaluation?.score ?? null,
+            verdict: candidate.evaluation?.verdict || null,
+          },
+        });
       } catch (error) {
-        candidates.push(toFailedCandidate(
+        const candidate = toFailedCandidate(
           agent,
           repository,
           error,
-        ));
+        );
+        candidates.push(candidate);
+        reportExecutionEvent(onEvent, {
+          type: 'competition_candidate_completed',
+          stage: 'competition',
+          status: 'failed',
+          messageKey: 'run.competitionCandidateCompleted',
+          data: { agentId: agent.id, status: candidate.status },
+        });
       }
     }
 
     const comparison = this.evaluator.evaluate(candidates);
+    reportExecutionEvent(onEvent, {
+      type: 'competition_ranking',
+      stage: 'competition',
+      status: 'completed',
+      messageKey: 'run.competitionRanking',
+      data: {
+        winnerAgentId: comparison.winner?.agentId || null,
+        ranking: comparison.ranking,
+      },
+    });
     const history = await this.persistCompetitionResults({
       competitionId,
       selectedAgents,

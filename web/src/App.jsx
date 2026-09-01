@@ -8,6 +8,7 @@ import { CompetitionsPage } from './pages/CompetitionsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { ModelsPage } from './pages/ModelsPage';
+import { LiveRunPage } from './pages/LiveRunPage';
 import { PerformancePage } from './pages/PerformancePage';
 import { RunTaskPage } from './pages/RunTaskPage';
 import { RunsPage } from './pages/RunsPage';
@@ -16,7 +17,7 @@ import { SystemPage } from './pages/SystemPage';
 import './styles.css';
 
 function normalizePath(pathname) {
-  if (/^\/candidates\/[^/]+$/u.test(pathname) || /^\/history\/[^/]+$/u.test(pathname)) return pathname;
+  if (/^\/candidates\/[^/]+$/u.test(pathname) || /^\/history\/[^/]+$/u.test(pathname) || /^\/runs\/[^/]+$/u.test(pathname)) return pathname;
   return new Set(['/', '/new-task', '/run', '/runs', '/competitions', '/candidates', '/history', '/performance', '/agents', '/models', '/system', '/settings']).has(pathname) ? pathname : '/';
 }
 
@@ -25,7 +26,8 @@ export function App({ api = apiClient }) {
   useEffect(() => { const onPopState = () => setPath(normalizePath(window.location.pathname)); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState); }, []);
   const navigate = (nextPath) => { window.history.pushState({}, '', nextPath); setPath(normalizePath(nextPath)); };
   let page;
-  if (path === '/new-task' || path === '/run') page = <RunTaskPage api={api} />;
+  if (path === '/new-task' || path === '/run') page = <RunTaskPage api={api} onNavigate={navigate} />;
+  else if (path.startsWith('/runs/')) page = <LiveRunPage api={api} runId={decodeURIComponent(path.slice('/runs/'.length))} />;
   else if (path === '/runs') page = <RunsPage api={api} onNavigate={navigate} />;
   else if (path === '/competitions') page = <CompetitionsPage api={api} onNavigate={navigate} />;
   else if (path === '/candidates') page = <CandidatesPage api={api} onNavigate={navigate} />;

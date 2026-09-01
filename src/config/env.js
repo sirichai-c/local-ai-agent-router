@@ -29,6 +29,9 @@ const DEFAULT_SANDBOX_PIDS_LIMIT = 256;
 const DEFAULT_SANDBOX_TIMEOUT_MS = 300_000;
 const DEFAULT_SANDBOX_INSTALL_TIMEOUT_MS = 300_000;
 const DEFAULT_SANDBOX_RUN_ROOT = './.sandbox-runs';
+const DEFAULT_REALTIME_EVENT_LIMIT = 300;
+const DEFAULT_REALTIME_SESSION_TTL_MS = 1_800_000;
+const DEFAULT_REALTIME_HEARTBEAT_MS = 15_000;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -82,6 +85,16 @@ function parsePositiveInteger(value, defaultValue, variableName) {
 
   if (!Number.isSafeInteger(parsedValue) || parsedValue < 1) {
     throw new Error(`${variableName} must be a positive integer`);
+  }
+
+  return parsedValue;
+}
+
+function parseIntegerInRange(value, defaultValue, variableName, minimum, maximum) {
+  const parsedValue = parsePositiveInteger(value, defaultValue, variableName);
+
+  if (parsedValue < minimum || parsedValue > maximum) {
+    throw new Error(`${variableName} must be between ${minimum} and ${maximum}`);
   }
 
   return parsedValue;
@@ -335,6 +348,29 @@ const config = Object.freeze({
     runRoot: process.env.SANDBOX_RUN_ROOT?.trim()
       || DEFAULT_SANDBOX_RUN_ROOT,
   }),
+  realtime: Object.freeze({
+    eventLimit: parseIntegerInRange(
+      process.env.REALTIME_EVENT_LIMIT,
+      DEFAULT_REALTIME_EVENT_LIMIT,
+      'REALTIME_EVENT_LIMIT',
+      50,
+      1_000,
+    ),
+    sessionTtlMs: parseIntegerInRange(
+      process.env.REALTIME_SESSION_TTL_MS,
+      DEFAULT_REALTIME_SESSION_TTL_MS,
+      'REALTIME_SESSION_TTL_MS',
+      60_000,
+      86_400_000,
+    ),
+    heartbeatMs: parseIntegerInRange(
+      process.env.REALTIME_HEARTBEAT_MS,
+      DEFAULT_REALTIME_HEARTBEAT_MS,
+      'REALTIME_HEARTBEAT_MS',
+      1_000,
+      60_000,
+    ),
+  }),
 });
 
 module.exports = {
@@ -350,6 +386,7 @@ module.exports = {
   parseOptionalPath,
   parsePort,
   parsePositiveInteger,
+  parseIntegerInRange,
   validateAdaptiveWeights,
   validateCompetitionWeights,
   parseDockerMemory,

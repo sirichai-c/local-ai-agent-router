@@ -4,6 +4,11 @@ const { scoreEvaluator } = require('../evaluators/score.evaluator');
 const { staticEvaluator } = require('../evaluators/static.evaluator');
 const { gitService } = require('./git.service');
 
+function reportEvaluationEvent(onEvent, event) {
+  if (typeof onEvent !== 'function') return;
+  try { onEvent(event); } catch { /* Observability cannot alter evaluation. */ }
+}
+
 class EvaluatorService {
   constructor({
     diff = diffEvaluator,
@@ -27,6 +32,7 @@ class EvaluatorService {
     trackedDiff = '',
     untrackedFiles,
     unexpectedCommit = false,
+    onEvent,
   }) {
     if (typeof workspace !== 'string' || workspace.trim() === '') {
       throw new TypeError('workspace must be a non-empty string');
@@ -44,7 +50,21 @@ class EvaluatorService {
       workspace,
       changedFiles: diffResult.files,
     });
-    const projectResult = await this.project.evaluate({ workspace });
+    for (const check of staticCheckResults) {
+      if (!check.applicable) continue;
+      reportEvaluationEvent(onEvent, {
+        type: 'static_check',
+        stage: 'evaluation',
+        status: check.passed === false ? 'failed' : 'completed',
+        messageKey: 'run.staticCheck',
+        data: {
+          checkType: check.type || 'static',
+          file: check.file || null,
+          passed: check.passed ?? null,
+        },
+      });
+    }
+    const projectResult = await this.project.evaluate({ workspace, onEvent });
     const scoreResult = this.scorer.evaluate({
       execution,
       diff: diffResult,
@@ -92,4 +112,5 @@ const evaluatorService = new EvaluatorService();
 module.exports = {
   EvaluatorService,
   evaluatorService,
+  reportEvaluationEvent,
 };

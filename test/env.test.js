@@ -13,6 +13,7 @@ const {
   parseSandboxImage,
   parseOptionalPath,
   parsePositiveInteger,
+  parseIntegerInRange,
   validateAdaptiveWeights,
   validateCompetitionWeights,
 } = require('../src/config/env');
@@ -118,5 +119,22 @@ test('Agent execution backend supports explicit fail-closed modes', () => {
   assert.throws(
     () => parseAgentExecutionBackend('automatic'),
     /must be host, docker, or sbx/,
+  );
+});
+
+test('real-time configuration keeps event history, TTL, and heartbeat bounded', () => {
+  assert.deepEqual(config.realtime, {
+    eventLimit: 300,
+    sessionTtlMs: 1_800_000,
+    heartbeatMs: 15_000,
+  });
+  assert.equal(parseIntegerInRange('300', 100, 'LIMIT', 50, 1_000), 300);
+  assert.throws(
+    () => parseIntegerInRange('10', 100, 'LIMIT', 50, 1_000),
+    /between 50 and 1000/,
+  );
+  assert.throws(
+    () => parseIntegerInRange('1001', 100, 'LIMIT', 50, 1_000),
+    /between 50 and 1000/,
   );
 });
