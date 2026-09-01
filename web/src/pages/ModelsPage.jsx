@@ -1,0 +1,8 @@
+import { EmptyState, ErrorNotice, LoadingState, Metric, PageHeader, Panel, StatusBadge } from '../components/ui';
+import { useSystemData } from '../hooks/useSystemData';
+import { useI18n } from '../i18n/I18nContext';
+
+export function ModelsPage({ api }) {
+  const { t } = useI18n(); const state = useSystemData(api); const models = state.models?.models || [];
+  return <><PageHeader eyebrow="OLLAMA" title={t('models.title')} description={t('models.subtitle')} />{state.loading ? <LoadingState /> : <>{state.errors.map((error, index) => <ErrorNotice error={error} key={`${error.code}-${index}`} />)}<Panel><div className="metric-grid metric-grid-compact"><Metric label={t('system.ollama')} value={<StatusBadge value={state.ollama?.status === 'ok' ? 'online' : 'offline'} />} /><Metric label={t('system.model')} value={state.models?.configuredModel || state.ollama?.model} /><Metric label={t('models.installed')} value={models.length} /></div></Panel><div className="model-list">{models.length ? models.map((model) => { const name = model.name || model.model; const active = name === state.models?.configuredModel; return <Panel key={name} className="model-card"><div className="model-card-heading"><strong>{name}</strong>{active && <StatusBadge value="available" label={t('models.active')} />}</div><dl className="model-facts"><div><dt>{t('models.family')}</dt><dd>{model.details?.family || '—'}</dd></div><div><dt>{t('models.parameters')}</dt><dd>{model.details?.parameter_size || '—'}</dd></div><div><dt>{t('models.quantization')}</dt><dd>{model.details?.quantization_level || '—'}</dd></div></dl></Panel>; }) : <EmptyState>{t('models.noModels')}</EmptyState>}</div></>}</>;
+}

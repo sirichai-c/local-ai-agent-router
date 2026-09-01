@@ -36,8 +36,8 @@ export function formatDate(value) {
 
 export function statusTone(status) {
   const value = String(status || '').toLowerCase();
-  if (['pass', 'completed', 'merged', 'approved', 'ok', 'available'].includes(value)) return 'success';
+  if (['pass', 'completed', 'merged', 'approved', 'ok', 'available', 'online', 'ready'].includes(value)) return 'success';
   if (value.includes('warning') || value === 'degraded' || value === 'pending') return 'warning';
-  if (['fail', 'failed', 'evaluation_failed', 'rejected', 'unavailable'].includes(value)) return 'danger';
+  if (['fail', 'failed', 'evaluation_failed', 'rejected', 'unavailable', 'offline'].includes(value)) return 'danger';
   return 'neutral';
 }

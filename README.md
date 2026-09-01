@@ -543,7 +543,7 @@ Git worktrees isolate source-control state, while the Phase 11 Docker backends r
 
 The local Qwen Code 0.22.3 and `qwen3:8b` combination completed the bounded live validation that created a new documentation file. Existing-file edits that required a read followed by another tool call were not consistently reliable because the model sometimes interpreted tool output as a new instruction. This is a current model/CLI limitation, not a successful general-purpose edit guarantee.
 
-## Local Web Dashboard
+## Local Agent Control Center Dashboard
 
 The Phase 12 Dashboard replaces manual curl/Thunder Client inspection with a local browser workflow while keeping the backend as the security authority:
 
@@ -553,15 +553,41 @@ Browser -> React Dashboard -> Central API client -> Express backend
     -> Explicit Human Approve or Reject
 ```
 
-The SPA provides six focused sections:
+The SPA is a quiet, developer-focused Agent Control Center with a persistent sidebar and these sections:
 
-- **Dashboard** shows backend and Ollama health, the canonical model, Agent availability, recent tasks, and real performance summaries when history exists.
-- **Run Task** accepts a multi-line task plus a server-side workspace path, displays deterministic router classification/ranking, and sends either the existing Auto Agent or sequential competition request.
+- **Overview** starts with an Agent command composer, then shows review needs, recent sessions, runtime health, and real performance summaries.
+- **New Task** accepts a multi-line task plus a server-side workspace path, displays deterministic router classification/ranking, and sends either the existing Auto Agent or sequential competition request.
+- **Runs** and **Competitions** present stored work as Agent sessions and identify a competition result only as the Best Candidate.
 - **Candidates** retrieves fresh Phase 10 review evidence, displays tracked diff as escaped text, lists untracked paths separately, and requires confirmation for fingerprint-bound approval or rejection.
 - **History** browses bounded SQLite task metadata and Agent runs without implying that raw stdout or diffs were stored.
 - **Performance** shows global, recent, and category-weighted Agent statistics from existing Phase 9 endpoints.
-- **System** gives a read-only view of local models, Agent host detection, effective runtime, and sandbox capability.
+- **Agents**, **Models**, and **System** give read-only registry, Ollama, execution-backend, and sandbox evidence. Hardware metrics are labelled unavailable when the backend does not expose them; values are never invented.
+- **Settings** changes only local UI language, theme, and detail preference.
+
+Thai is the first-run language and English can be selected with the `TH | EN` control. Light is the first-run theme; Dark and System themes are also available. These non-sensitive preferences are stored locally in the browser. The global detail switch follows a deliberate **Simple -> Advanced** architecture: Simple shows the task, selected Agent, outcome, evaluation, changed files, diff, and human decision; Advanced additionally reveals routing components, adaptive state, branch/worktree, commits, fingerprint, sandbox evidence, and execution metadata. Security warnings remain visible in both modes.
+
+The Run Session uses a final-evidence timeline and Activity/Terminal tabs. Agent output is labelled unverified, while Evaluator results are labelled verified system evidence. This is a request/response view—not simulated live output.
 
 The Dashboard does not enable Agent execution, change configuration, install models/Agents, push Git remotes, or make backend approval decisions. An evaluation pass and a competition winner remain candidate evidence—not a merge. Approval sends exactly the fingerprint returned by the current review and never retries a conflict automatically. A `candidate_changed`, `stale_base`, dirty-target, or wrong-branch conflict requires the human to refresh and review again.
 
 Phase 12 intentionally uses ordinary HTTP request/response loading states. It does not include SSE, WebSockets, live Agent output, job cancellation, or a task queue. Those are later-phase concerns.
+
+Dashboard development:
+
+```powershell
+# Terminal 1
+npm start
+
+# Terminal 2
+npm run web:dev
+```
+
+Open `http://localhost:5173`; Vite proxies `/api` and `/health` to the backend. For local production use:
+
+```powershell
+npm run web:test
+npm run web:build
+npm start
+```
+
+Then open `http://localhost:3000`. Express serves `web/dist` when present while retaining JSON behavior for `/health`, all `/api/*` routes, and unknown API routes.

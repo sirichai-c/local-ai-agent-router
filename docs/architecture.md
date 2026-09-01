@@ -327,13 +327,19 @@ Git worktrees isolate repository state but do not themselves sandbox processes. 
 
 The final `qwen3:8b` validation completed a bounded single-write documentation task. Multi-tool existing-file edits were not consistently reliable with Qwen Code 0.22.3 because the model sometimes interpreted a tool result as a new instruction, so this phase does not claim reliable general-purpose editing for that model and CLI combination.
 
-## Local Dashboard boundary
+## Local Agent Control Center boundary
 
 ```text
                          Browser
                             |
                             v
                       React Dashboard
+                            |
+                  +---------+---------+
+                  v                   v
+             Thai / English      Simple / Advanced
+                  |                   |
+                  +---------+---------+
                             |
                             v
                   Central request API client
@@ -364,6 +370,10 @@ The final `qwen3:8b` validation completed a bounded single-write documentation t
 ```
 
 The browser is a presentation client, not a new trust boundary. It submits only the existing task, workspace, known Agent IDs, task IDs, and reviewed fingerprint fields. Backend registry validation, execution gates, sandbox policy, candidate selection, fresh fingerprint calculation, target checks, idempotency, and merge authorization remain unchanged.
+
+The Dashboard uses a central token layer for Light/Dark themes and a translation-key layer for Thai/English. Thai, Light, and Simple are first-run defaults. Local storage contains only these non-sensitive UI preferences. Simple mode removes operational noise, while Advanced reveals router score components, adaptive evidence, Git identifiers, worktree/sandbox metadata, and check details. Neither mode changes backend requests or authorization decisions, and critical warnings are never hidden.
+
+Navigation is separated into Overview/New Task, Runs/Competitions/Candidates, History/Performance, and Agents/Models/System/Settings. Candidate review uses a responsive Files -> Diff -> Review layout. The diff is always rendered as inert React text, untracked files remain a separate list, and the approve request forwards the exact reviewed fingerprint. WARNING candidates add a typed `APPROVE` interaction, but this is only UX friction; backend Phase 10 checks remain authoritative.
 
 The frontend API layer normalizes safe error messages and distinguishes invalid requests, missing resources, state conflicts, server failures, and backend connectivity failures. Diff and task strings are rendered as React text nodes; the application has no `dangerouslySetInnerHTML`, runtime HTML injection, remote scripts, or frontend secrets. Large tracked diffs are previewed conservatively, while untracked paths remain a separate evidence section because the tracked diff does not contain their contents.
 

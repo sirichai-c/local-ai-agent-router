@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DashboardPage } from './DashboardPage';
 import { HistoryPage } from './HistoryPage';
 import { PerformancePage } from './PerformancePage';
+import { render } from '../test/render';
 
 describe('empty and failure states', () => {
   it('shows History empty state', async () => {
@@ -26,6 +27,6 @@ describe('empty and failure states', () => {
     const reject = vi.fn().mockRejectedValue(unavailable);
     render(<DashboardPage api={{ getHealth: reject, getOllamaHealth: reject, getModels: reject, getAgents: reject, getHistory: reject, getAgentPerformance: reject }} onNavigate={() => {}} />);
     expect(await screen.findByText(/Backend is unreachable/u)).toBeInTheDocument();
-    expect(screen.getAllByText('unreachable').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Offline').length).toBeGreaterThan(0);
   });
 });

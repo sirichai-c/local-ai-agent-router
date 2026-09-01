@@ -1,57 +1,18 @@
-import { useEffect, useState } from 'react';
-import { EmptyState, ErrorNotice, LoadingState, Metric, Panel, StatusBadge } from '../components/ui';
+import { useEffect, useMemo, useState } from 'react';
+import { EmptyState, ErrorNotice, LoadingState, Metric, PageHeader, Panel, StatusBadge } from '../components/ui';
+import { usePreferences } from '../context/PreferencesContext';
+import { useI18n } from '../i18n/I18nContext';
 import { formatDate, formatDuration, formatScore } from '../utils/format';
 
-export function HistoryPage({ api }) {
-  const [limit, setLimit] = useState(20);
-  const [tasks, setTasks] = useState([]);
-  const [detail, setDetail] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    api.getHistory(limit).then((response) => { if (active) setTasks(response.tasks || []); }).catch((requestError) => { if (active) setError(requestError); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [api, limit]);
-
-  const loadDetail = async (taskId) => {
-    setDetailLoading(true); setError(null);
-    try { setDetail(await api.getHistoryTask(taskId)); }
-    catch (requestError) { setError(requestError); }
-    finally { setDetailLoading(false); }
-  };
-
-  return (
-    <>
-      <header className="page-heading"><div><span className="eyebrow">Persistent memory</span><h1>Execution history</h1><p>Stored metadata only—no raw stdout, stderr, diff, or secrets.</p></div></header>
-      <ErrorNotice error={error} />
-      <Panel title="Recent tasks">
-        {loading ? <LoadingState /> : tasks.length === 0 ? <EmptyState>No task history yet.</EmptyState> : (
-          <>
-            <div className="table-scroll"><table><thead><tr><th>Date</th><th>Task</th><th>Mode</th><th>Status</th><th>Winner</th><th>Decision</th><th>Runs</th></tr></thead><tbody>
-              {tasks.map((task) => <tr className="clickable-row" key={task.id} onClick={() => loadDetail(task.id)}><td>{formatDate(task.createdAt)}</td><td><strong>{task.task}</strong><small className="table-subtitle">{task.id}</small></td><td>{task.mode}</td><td><StatusBadge value={task.status} /></td><td>{task.winnerAgentId || '—'}</td><td><StatusBadge value={task.decision || 'pending'} /></td><td>{task.runCount}</td></tr>)}
-            </tbody></table></div>
-            {tasks.length >= limit && <button type="button" className="button-secondary load-more" onClick={() => setLimit((value) => Math.min(100, value + 20))} disabled={limit >= 100}>Load more</button>}
-          </>
-        )}
-      </Panel>
-
-      {detailLoading && <LoadingState label="Loading task detail…" />}
-      {detail && (
-        <Panel title="Task detail" action={<button type="button" className="button-link" onClick={() => setDetail(null)}>Close</button>}>
-          <div className="metric-grid metric-grid-compact">
-            <Metric label="ID" value={detail.id} /><Metric label="Mode" value={detail.mode} /><Metric label="Status" value={<StatusBadge value={detail.status} />} /><Metric label="Decision" value={<StatusBadge value={detail.decision} />} />
-            <Metric label="Target branch" value={detail.targetBranch || '—'} /><Metric label="Winner" value={detail.winnerAgentId || '—'} /><Metric label="Candidate commit" value={detail.candidateCommit || '—'} /><Metric label="Merge commit" value={detail.mergeCommit || '—'} />
-          </div>
-          <h3>Task</h3><p className="preserve-text">{detail.task}</p>
-          <h3>Classification</h3><div className="tag-list">{Object.entries(detail.classification || {}).map(([name, value]) => <span key={name}>{name}: {formatScore(value)}</span>)}</div>
-          <h3>Agent runs</h3>
-          {detail.runs?.length ? <div className="table-scroll"><table><thead><tr><th>Agent</th><th>Status</th><th>Router</th><th>Evaluation</th><th>Competition</th><th>Verdict</th><th>Duration</th></tr></thead><tbody>{detail.runs.map((run) => <tr key={run.id}><td>{run.agentId}</td><td><StatusBadge value={run.status} /></td><td>{formatScore(run.routerScore)}</td><td>{formatScore(run.evaluationScore)}</td><td>{formatScore(run.competitionScore)}</td><td><StatusBadge value={run.verdict} /></td><td>{formatDuration(run.durationMs)}</td></tr>)}</tbody></table></div> : <EmptyState>No Agent runs stored.</EmptyState>}
-        </Panel>
-      )}
-    </>
-  );
+const FILTERS = ['all', 'completed', 'pending', 'approved', 'rejected', 'failed'];
+export function HistoryPage({ api, routeTaskId = '' }) {
+  const { t } = useI18n(); const { detailMode } = usePreferences();
+  const [limit, setLimit] = useState(20); const [tasks, setTasks] = useState([]); const [detail, setDetail] = useState(null); const [filter, setFilter] = useState('all'); const [search, setSearch] = useState(''); const [loading, setLoading] = useState(true); const [detailLoading, setDetailLoading] = useState(false); const [error, setError] = useState(null);
+  useEffect(() => { let active = true; setLoading(true); api.getHistory(limit).then((response) => { if (active) setTasks(response.tasks || []); }).catch((requestError) => { if (active) setError(requestError); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [api, limit]);
+  const loadDetail = async (taskId) => { setDetailLoading(true); setError(null); try { setDetail(await api.getHistoryTask(taskId)); } catch (requestError) { setError(requestError); } finally { setDetailLoading(false); } };
+  useEffect(() => { if (routeTaskId) loadDetail(routeTaskId); }, [routeTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const visible = useMemo(() => tasks.filter((task) => { const text = `${task.task} ${task.id} ${task.winnerAgentId || ''}`.toLowerCase(); const matchesText = text.includes(search.trim().toLowerCase()); if (!matchesText || filter === 'all') return matchesText; if (filter === 'pending') return (task.decision || 'pending') === 'pending'; if (['approved', 'rejected'].includes(filter)) return task.decision === filter; if (filter === 'failed') return String(task.status).includes('failed'); return ['completed', 'completed_with_warnings', 'merged'].includes(task.status); }), [filter, search, tasks]);
+  return <><PageHeader eyebrow="PERSISTENT MEMORY" title={t('history.title')} description={t('history.subtitle')} /><ErrorNotice error={error} /><Panel><div className="history-tools"><label>{t('common.search')}<input value={search} onChange={(event) => setSearch(event.target.value)} /></label><div className="filter-pills">{FILTERS.map((name) => <button type="button" className={filter === name ? 'active' : ''} onClick={() => setFilter(name)} key={name}>{t(`history.filters.${name}`)}</button>)}</div></div>{loading ? <LoadingState /> : visible.length === 0 ? <EmptyState>{t('history.noHistory')}</EmptyState> : <div className="session-list">{visible.map((task) => <button type="button" className="session-row" key={task.id} onClick={() => loadDetail(task.id)}><span><strong>{task.task}</strong><small>{formatDate(task.createdAt)} · {task.mode} · {task.winnerAgentId || '—'}</small></span><span className="session-status"><StatusBadge value={task.status} /><StatusBadge value={task.decision || 'pending'} /></span></button>)}</div>}{tasks.length >= limit && <button type="button" className="button-secondary load-more" onClick={() => setLimit((value) => Math.min(100, value + 20))} disabled={limit >= 100}>{t('history.loadMore')}</button>}</Panel>
+    {detailLoading && <LoadingState />}{detail && <Panel title={t('history.taskDetail')} action={<button type="button" className="button-link" onClick={() => setDetail(null)}>{t('common.close')}</button>}><div className="metric-grid metric-grid-compact"><Metric label="ID" value={detail.id} mono /><Metric label="Mode" value={detail.mode} /><Metric label="Status" value={<StatusBadge value={detail.status} />} /><Metric label={t('candidate.decision')} value={<StatusBadge value={detail.decision || 'pending'} />} />{detailMode === 'advanced' && <><Metric label={t('candidate.targetBranch')} value={detail.targetBranch} mono /><Metric label={t('competition.best')} value={detail.winnerAgentId} /><Metric label="Candidate Commit" value={detail.candidateCommit} mono /><Metric label="Merge Commit" value={detail.mergeCommit} mono /></>}</div><h3>Task</h3><p className="preserve-text">{detail.task}</p><h3>{t('history.classification')}</h3><div className="tag-list">{Object.entries(detail.classification || {}).filter(([, value]) => value > 0).map(([name, value]) => <span key={name}>{t(`category.${name}`)}: {formatScore(value)}</span>)}</div><h3>{t('history.agentRuns')}</h3>{detail.runs?.length ? <div className="table-scroll"><table><thead><tr><th>Agent</th><th>Status</th><th>Router</th><th>{t('evaluation.score')}</th><th>{t('competition.final')}</th><th>{t('evaluation.verdict')}</th><th>{t('run.duration')}</th></tr></thead><tbody>{detail.runs.map((run) => <tr key={run.id}><td>{run.agentId}</td><td><StatusBadge value={run.status} /></td><td>{formatScore(run.routerScore)}</td><td>{formatScore(run.evaluationScore)}</td><td>{formatScore(run.competitionScore)}</td><td><StatusBadge value={run.verdict} /></td><td>{formatDuration(run.durationMs)}</td></tr>)}</tbody></table></div> : <EmptyState>{t('history.noHistory')}</EmptyState>}</Panel>}
+  </>;
 }
