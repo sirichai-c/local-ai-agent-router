@@ -2,6 +2,7 @@ const paths = {
   home: <><path d="m3 11 9-8 9 8" /><path d="M5 10v10h14V10" /><path d="M9 20v-6h6v6" /></>,
   plus: <><path d="M12 5v14M5 12h14" /></>,
   play: <path d="m8 5 11 7-11 7Z" />,
+  queue: <><path d="M4 6h16M4 12h16M4 18h16" /><path d="M7 3v6M12 9v6M17 15v6" /></>,
   competition: <><path d="M8 4v5a4 4 0 0 0 8 0V4" /><path d="M5 4h14M12 13v7M8 20h8" /></>,
   candidate: <><path d="M6 3h12v18H6z" /><path d="M9 8h6M9 12h6M9 16h4" /></>,
   history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>,

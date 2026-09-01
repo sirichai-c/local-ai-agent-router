@@ -34,6 +34,10 @@ test('serves built Dashboard routes without swallowing API or health routes', as
       assert.equal(history.status, 200);
       assert.match(await history.text(), /Dashboard/u);
 
+      const queue = await fetch(`${baseUrl}/queue`, { headers: { accept: 'text/html' } });
+      assert.equal(queue.status, 200);
+      assert.match(await queue.text(), /Dashboard/u);
+
       const asset = await fetch(`${baseUrl}/asset.txt`);
       assert.equal(await asset.text(), 'asset');
 

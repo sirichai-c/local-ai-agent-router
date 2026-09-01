@@ -84,6 +84,13 @@ function post(path, body) {
   });
 }
 
+function patch(path, body) {
+  return request(path, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
 export const apiClient = {
   getHealth: () => request('/health'),
   getModels: () => request('/api/models'),
@@ -108,6 +115,27 @@ export const apiClient = {
     ...(agents ? { agents } : {}),
   }),
   getRun: (runId) => request(`/api/runs/${encodeURIComponent(runId)}`),
+  submitJob: ({ type, task, workspace, agents, priority = 50 }) => post('/api/jobs', {
+    type,
+    task,
+    workspace,
+    priority,
+    ...(agents ? { agents } : {}),
+  }),
+  getJobs: ({ limit = 50, status } = {}) => request(
+    `/api/jobs?limit=${encodeURIComponent(limit)}${status ? `&status=${encodeURIComponent(status)}` : ''}`,
+  ),
+  getJob: (jobId) => request(`/api/jobs/${encodeURIComponent(jobId)}`),
+  getJobStats: () => request('/api/jobs/stats'),
+  cancelJob: (jobId) => post(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {}),
+  retryJob: (jobId, priority) => post(
+    `/api/jobs/${encodeURIComponent(jobId)}/retry`,
+    priority === undefined ? {} : { priority },
+  ),
+  updateJobPriority: (jobId, priority) => patch(
+    `/api/jobs/${encodeURIComponent(jobId)}/priority`,
+    { priority },
+  ),
   getCandidate: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/candidate`),
   approveCandidate: (taskId, expectedFingerprint) => post(
     `/api/tasks/${encodeURIComponent(taskId)}/approve`,

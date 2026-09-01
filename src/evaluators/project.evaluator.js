@@ -53,7 +53,7 @@ class ProjectEvaluator {
     }));
   }
 
-  async evaluate({ workspace, onEvent }) {
+  async evaluate({ workspace, onEvent, signal }) {
     const packagePath = resolveWorkspaceFile(workspace, 'package.json');
     let packageStat;
 
@@ -150,6 +150,7 @@ class ProjectEvaluator {
       workspace,
       scripts: packageJson.scripts || {},
       onEvent,
+      signal,
     });
 
     return {

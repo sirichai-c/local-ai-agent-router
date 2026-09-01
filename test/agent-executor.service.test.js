@@ -13,6 +13,7 @@ const {
 const {
   createTemporaryDatabase,
 } = require('../test-support/database-test.helper');
+const { ExecutionCancelledError } = require('../src/services/cancellation.service');
 
 const repo = 'C:\\Projects\\disposable';
 const worktreePath = 'C:\\Projects\\.agent-worktrees\\disposable\\task-opencode';
@@ -449,6 +450,35 @@ test('disabled single-agent execution does not create history', async () => {
 
   assert.equal(result.status, 'execution_disabled');
   assert.equal(createCalls, 0);
+});
+
+test('user cancellation preserves partial worktree context without recording a failed Agent score', async (t) => {
+  const { database } = await createTemporaryDatabase(t, 'agent-router-cancel-history-');
+  const history = new HistoryService({ database });
+  const controller = new AbortController();
+  let processStarted;
+  const started = new Promise((resolve) => { processStarted = resolve; });
+  const service = createService({
+    history,
+    runner: {
+      runProcess: ({ signal }) => new Promise((_resolve, reject) => {
+        processStarted();
+        signal.addEventListener('abort', () => reject(new ExecutionCancelledError()), { once: true });
+      }),
+    },
+  });
+  const execution = service.executeTask({
+    task: 'safe task', workspace: repo, signal: controller.signal,
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(execution, (error) => (
+    error.code === 'JOB_CANCELLED'
+      && error.candidateContext.worktreePath === worktreePath
+  ));
+  const stored = history.getTaskById('task123');
+  assert.equal(stored.status, 'cancelled');
+  assert.equal(stored.runs.length, 0);
 });
 
 test('post-execution history failure reports clearly and preserves candidate result', async () => {

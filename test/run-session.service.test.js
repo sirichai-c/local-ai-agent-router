@@ -129,3 +129,31 @@ test('event validation rejects arbitrary types and oversized data', () => {
     data: { value: 'x'.repeat(9_000) },
   }), /safety limit/);
 });
+
+test('Job-aware run sessions expose queue, cancellation, and interruption lifecycle states', () => {
+  const ids = ['queued-run', 'interrupted-run'];
+  const sessions = new RunSessionService({
+    idFactory: () => ids.shift(),
+    startCleanupTimer: false,
+  });
+  sessions.create('single', { jobId: 'job-1', initialState: 'queued' });
+  sessions.append('queued-run', {
+    type: 'queue_position', stage: 'queue', status: 'pending',
+    messageKey: 'run.queuePosition', data: { position: 2 },
+  });
+  sessions.append('queued-run', {
+    type: 'job_cancel_requested', stage: 'queue', status: 'warning',
+    messageKey: 'run.jobCancelRequested', data: { jobId: 'job-1' },
+  });
+  sessions.cancel('queued-run', { jobId: 'job-1' });
+  assert.equal(sessions.snapshot('queued-run').jobId, 'job-1');
+  assert.equal(sessions.snapshot('queued-run').state, 'cancelled');
+  assert.deepEqual(
+    sessions.eventsAfter('queued-run').map((item) => item.type),
+    ['queue_position', 'job_cancel_requested', 'job_cancelled'],
+  );
+
+  sessions.create('competition', { jobId: 'job-2', initialState: 'starting' });
+  sessions.interrupt('interrupted-run', { jobId: 'job-2' });
+  assert.equal(sessions.snapshot('interrupted-run').state, 'interrupted');
+});

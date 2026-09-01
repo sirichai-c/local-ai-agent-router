@@ -241,7 +241,15 @@ class SandboxAgentRunnerService {
     });
   }
 
-  async runContainer({ name, workspace, command, args, environment, timeoutMs }) {
+  async runContainer({
+    name,
+    workspace,
+    command,
+    args,
+    environment,
+    timeoutMs,
+    signal,
+  }) {
     const dockerArgs = this.buildDockerArgs({
       name,
       workspace,
@@ -259,6 +267,7 @@ class SandboxAgentRunnerService {
         env: {},
         timeoutMs,
         maxOutputBytes: this.maxOutputBytes,
+        signal,
       });
     } finally {
       await this.removeContainer(name);
@@ -267,7 +276,7 @@ class SandboxAgentRunnerService {
     return result;
   }
 
-  async verifyOllama({ worktree, ollamaBaseUrl }) {
+  async verifyOllama({ worktree, ollamaBaseUrl, signal }) {
     const endpoint = `${toContainerOllamaUrl(ollamaBaseUrl)}/api/tags`;
     const name = `lar-agent-${worktree.taskId}-ollama`;
     const script = [
@@ -283,6 +292,7 @@ class SandboxAgentRunnerService {
       args: ['-e', script, endpoint],
       environment: {},
       timeoutMs: 30_000,
+      signal,
     });
 
     if (result.exitCode !== 0 || result.timedOut) {
@@ -295,7 +305,7 @@ class SandboxAgentRunnerService {
     return endpoint;
   }
 
-  async run({ invocation, agent, worktree, ollamaBaseUrl }) {
+  async run({ invocation, agent, worktree, ollamaBaseUrl, signal }) {
     const agentConfig = getSandboxAgent(agent.id);
     await this.assertAvailable(agent.id);
     const workspace = await this.validateWorktree(agent, worktree);
@@ -320,6 +330,7 @@ class SandboxAgentRunnerService {
     const ollamaEndpoint = await this.verifyOllama({
       worktree: verifiedWorktree,
       ollamaBaseUrl,
+      signal,
     });
     const name = `lar-agent-${worktree.taskId}-${sanitizeAgentId(agent.id)}`;
     const result = await this.runContainer({
@@ -329,6 +340,7 @@ class SandboxAgentRunnerService {
       args: invocation.args,
       environment,
       timeoutMs: invocation.timeoutMs || this.timeoutMs,
+      signal,
     });
 
     return {

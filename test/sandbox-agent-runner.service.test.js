@@ -177,3 +177,21 @@ test('loopback Ollama URL is mapped only inside Docker', () => {
     'http://host.docker.internal:11434',
   );
 });
+
+test('Agent sandbox forwards cancellation to health and Agent processes but not cleanup', async (t) => {
+  const fixture = await createFixture(t);
+  const runner = createRunner();
+  const service = createService(fixture, runner);
+  const controller = new AbortController();
+  await service.run({
+    agent: { id: 'opencode' },
+    worktree: fixture.worktree,
+    ollamaBaseUrl: 'http://localhost:11434',
+    signal: controller.signal,
+    invocation: { command: 'opencode', args: ['run'], env: {}, cwd: fixture.worktree.worktreePath },
+  });
+  const runCalls = runner.calls.filter((call) => call.args[0] === 'run');
+  const cleanupCalls = runner.calls.filter((call) => call.args[0] === 'rm');
+  assert.ok(runCalls.every((call) => call.signal === controller.signal));
+  assert.ok(cleanupCalls.every((call) => call.signal === undefined));
+});

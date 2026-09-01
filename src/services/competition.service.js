@@ -12,6 +12,7 @@ const {
 } = require('./history.service');
 const { routerService } = require('./router.service');
 const { createTaskId } = require('./worktree.service');
+const { isCancellationError, throwIfAborted } = require('./cancellation.service');
 
 class CompetitionValidationError extends Error {
   constructor(message, code) {
@@ -256,7 +257,8 @@ class CompetitionService {
       };
   }
 
-  async compete({ task, workspace, agentIds, onEvent }) {
+  async compete({ task, workspace, agentIds, onEvent, signal }) {
+    throwIfAborted(signal);
     const normalizedAgentIds = normalizeAgentIds(agentIds);
 
     if (normalizedAgentIds && normalizedAgentIds.length > this.maxAgents) {
@@ -290,6 +292,7 @@ class CompetitionService {
       data: {},
     });
     const analysis = await this.router.analyzeTask(task);
+    throwIfAborted(signal);
     reportExecutionEvent(onEvent, {
       type: 'router_completed',
       stage: 'routing',
@@ -340,6 +343,7 @@ class CompetitionService {
       data: {},
     });
     const repository = await this.executor.validateRepository(workspace);
+    throwIfAborted(signal);
     reportExecutionEvent(onEvent, {
       type: 'repository_validated',
       stage: 'repository',
@@ -361,6 +365,10 @@ class CompetitionService {
 
     // Deliberately sequential: local agents share one Ollama/GPU runtime.
     for (const agent of selectedAgents) {
+      if (signal?.aborted) {
+        try { await this.history.completeTask(competitionId, 'cancelled'); } catch { /* best effort */ }
+        throwIfAborted(signal);
+      }
       reportExecutionEvent(onEvent, {
         type: 'competition_candidate_starting',
         stage: 'competition',
@@ -376,6 +384,7 @@ class CompetitionService {
           taskId: competitionId,
           classification: analysis.classification,
           onEvent,
+          signal,
         });
         const candidate = toCandidateResult(result, agent);
         candidates.push(candidate);
@@ -392,6 +401,10 @@ class CompetitionService {
           },
         });
       } catch (error) {
+        if (isCancellationError(error, signal)) {
+          try { await this.history.completeTask(competitionId, 'cancelled'); } catch { /* best effort */ }
+          throw error;
+        }
         const candidate = toFailedCandidate(
           agent,
           repository,
@@ -406,6 +419,11 @@ class CompetitionService {
           data: { agentId: agent.id, status: candidate.status },
         });
       }
+    }
+
+    if (signal?.aborted) {
+      try { await this.history.completeTask(competitionId, 'cancelled'); } catch { /* best effort */ }
+      throwIfAborted(signal);
     }
 
     const comparison = this.evaluator.evaluate(candidates);

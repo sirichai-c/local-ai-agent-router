@@ -108,11 +108,13 @@ class AgentExecutionBackendService {
     };
   }
 
-  async run({ invocation, agent, worktree, ollamaBaseUrl }) {
+  async run({ invocation, agent, worktree, ollamaBaseUrl, signal }) {
     await this.assertAvailable(agent.id);
 
     if (this.backend === 'host') {
-      return this.hostRunner.runProcess(invocation);
+      return this.hostRunner.runProcess(signal === undefined
+        ? invocation
+        : { ...invocation, signal });
     }
 
     return this.sandboxRunner.run({
@@ -120,6 +122,7 @@ class AgentExecutionBackendService {
       agent,
       worktree,
       ollamaBaseUrl,
+      signal,
     });
   }
 }

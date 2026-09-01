@@ -1,7 +1,9 @@
 const { createApp } = require('./app');
 const { config } = require('./config/env');
 const { databaseService } = require('./services/database.service');
+const { jobManagerService } = require('./services/job-manager.service');
 
+jobManagerService.start();
 const app = createApp();
 const server = app.listen(config.port, () => {
   console.log(`${config.serviceName} listening on port ${config.port}`);
@@ -12,10 +14,17 @@ server.on('error', (error) => {
   process.exitCode = 1;
 });
 
-function shutdown(signal) {
-  console.log(`${signal} received; closing HTTP server`);
+let shutdownStarted = false;
 
-  server.close((error) => {
+async function shutdown(signal) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.log(`${signal} received; closing HTTP server`);
+  const managerShutdown = jobManagerService.shutdown();
+  void managerShutdown.finally(() => server.closeAllConnections?.());
+
+  server.close(async (error) => {
+    await managerShutdown;
     databaseService.close();
 
     if (error) {

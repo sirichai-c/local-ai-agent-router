@@ -14,11 +14,12 @@ import { RunTaskPage } from './pages/RunTaskPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SystemPage } from './pages/SystemPage';
+import { QueuePage } from './pages/QueuePage';
 import './styles.css';
 
 function normalizePath(pathname) {
   if (/^\/candidates\/[^/]+$/u.test(pathname) || /^\/history\/[^/]+$/u.test(pathname) || /^\/runs\/[^/]+$/u.test(pathname)) return pathname;
-  return new Set(['/', '/new-task', '/run', '/runs', '/competitions', '/candidates', '/history', '/performance', '/agents', '/models', '/system', '/settings']).has(pathname) ? pathname : '/';
+  return new Set(['/', '/new-task', '/run', '/runs', '/queue', '/competitions', '/candidates', '/history', '/performance', '/agents', '/models', '/system', '/settings']).has(pathname) ? pathname : '/';
 }
 
 export function App({ api = apiClient }) {
@@ -27,8 +28,9 @@ export function App({ api = apiClient }) {
   const navigate = (nextPath) => { window.history.pushState({}, '', nextPath); setPath(normalizePath(nextPath)); };
   let page;
   if (path === '/new-task' || path === '/run') page = <RunTaskPage api={api} onNavigate={navigate} />;
-  else if (path.startsWith('/runs/')) page = <LiveRunPage api={api} runId={decodeURIComponent(path.slice('/runs/'.length))} />;
+  else if (path.startsWith('/runs/')) page = <LiveRunPage api={api} runId={decodeURIComponent(path.slice('/runs/'.length))} onNavigate={navigate} />;
   else if (path === '/runs') page = <RunsPage api={api} onNavigate={navigate} />;
+  else if (path === '/queue') page = <QueuePage api={api} onNavigate={navigate} />;
   else if (path === '/competitions') page = <CompetitionsPage api={api} onNavigate={navigate} />;
   else if (path === '/candidates') page = <CandidatesPage api={api} onNavigate={navigate} />;
   else if (path.startsWith('/candidates/')) page = <CandidatePage api={api} routeTaskId={decodeURIComponent(path.slice('/candidates/'.length))} />;

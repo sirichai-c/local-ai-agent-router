@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DashboardPage } from './DashboardPage';
 import { HistoryPage } from './HistoryPage';
 import { PerformancePage } from './PerformancePage';
+import { SystemPage } from './SystemPage';
 import { render } from '../test/render';
 
 describe('empty and failure states', () => {
@@ -28,5 +29,19 @@ describe('empty and failure states', () => {
     render(<DashboardPage api={{ getHealth: reject, getOllamaHealth: reject, getModels: reject, getAgents: reject, getHistory: reject, getAgentPerformance: reject }} onNavigate={() => {}} />);
     expect(await screen.findByText(/Backend is unreachable/u)).toBeInTheDocument();
     expect(screen.getAllByText('Offline').length).toBeGreaterThan(0);
+  });
+
+  it('shows read-only scheduler capacity on the System page', async () => {
+    const api = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'ok', service: 'router' }),
+      getOllamaHealth: vi.fn().mockResolvedValue({ status: 'ok', model: 'qwen3:8b' }),
+      getModels: vi.fn().mockResolvedValue({ configuredModel: 'qwen3:8b', models: [] }),
+      getAgents: vi.fn().mockResolvedValue({ agents: [] }),
+      getJobStats: vi.fn().mockResolvedValue({ status: 'running', active: 1, maxConcurrent: 1, queued: 4 }),
+    };
+    render(<SystemPage api={api} />);
+    expect(await screen.findByText('Job Scheduler')).toBeInTheDocument();
+    expect(screen.getByText('1 / 1')).toBeInTheDocument();
+    expect(screen.getByText('4')).toBeInTheDocument();
   });
 });

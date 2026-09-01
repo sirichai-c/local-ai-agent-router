@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { config } = require('../config/env');
 const { sandboxService } = require('../services/sandbox.service');
+const { isCancellationError, throwIfAborted } = require('../services/cancellation.service');
 const {
   sandboxSnapshotService,
 } = require('../services/sandbox-snapshot.service');
@@ -10,7 +11,7 @@ const {
 const SCRIPT_ORDER = Object.freeze(['test', 'lint', 'build']);
 
 function processSucceeded(result) {
-  return result.exitCode === 0 && !result.timedOut;
+  return result.exitCode === 0 && !result.timedOut && !result.aborted;
 }
 
 function toExecutionResult(type, result) {
@@ -87,7 +88,7 @@ class SandboxProjectEvaluator {
     }
   }
 
-  async install(snapshot) {
+  async install(snapshot, signal) {
     if (!this.installDependencies) {
       return {
         required: false,
@@ -108,6 +109,7 @@ class SandboxProjectEvaluator {
       network: 'bridge',
       timeoutMs: this.installTimeoutMs,
       purpose: 'dependency-install',
+      signal,
     });
 
     return {
@@ -119,6 +121,7 @@ class SandboxProjectEvaluator {
       passed: processSucceeded(result),
       exitCode: result.exitCode,
       timedOut: result.timedOut,
+      aborted: result.aborted === true,
       outputTruncated: result.outputTruncated,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -128,7 +131,7 @@ class SandboxProjectEvaluator {
     };
   }
 
-  async runScript(snapshot, scriptName) {
+  async runScript(snapshot, scriptName, signal) {
     const args = scriptName === 'test'
       ? ['test']
       : ['run', scriptName];
@@ -140,12 +143,14 @@ class SandboxProjectEvaluator {
       network: 'none',
       timeoutMs: this.timeoutMs,
       purpose: scriptName,
+      signal,
     });
 
     return toExecutionResult(`npm-${scriptName}`, result);
   }
 
-  async evaluate({ workspace, scripts = {}, onEvent }) {
+  async evaluate({ workspace, scripts = {}, onEvent, signal }) {
+    throwIfAborted(signal);
     const availableScripts = Object.fromEntries(SCRIPT_ORDER.map((name) => [
       name,
       typeof scripts[name] === 'string' && scripts[name].trim() !== '',
@@ -194,13 +199,15 @@ class SandboxProjectEvaluator {
 
     try {
       snapshot = await this.snapshots.create(workspace);
+      throwIfAborted(signal);
       if (this.installDependencies) {
         reportSandboxEvent(onEvent, 'sandbox_check_started', {
           check: 'dependency-install',
           network: 'bridge',
         });
       }
-      const dependencyInstall = await this.install(snapshot);
+      const dependencyInstall = await this.install(snapshot, signal);
+      throwIfAborted(signal);
       if (this.installDependencies) {
         reportSandboxEvent(onEvent, 'sandbox_check_completed', {
           check: 'dependency-install',
@@ -213,6 +220,7 @@ class SandboxProjectEvaluator {
       const scriptResults = {};
 
       for (const scriptName of SCRIPT_ORDER) {
+        throwIfAborted(signal);
         if (!availableScripts[scriptName]) {
           scriptResults[scriptName] = createSkippedScript(false);
           continue;
@@ -230,7 +238,8 @@ class SandboxProjectEvaluator {
           check: scriptName,
           network: 'none',
         });
-        scriptResults[scriptName] = await this.runScript(snapshot, scriptName);
+        scriptResults[scriptName] = await this.runScript(snapshot, scriptName, signal);
+        throwIfAborted(signal);
         reportSandboxEvent(onEvent, 'sandbox_check_completed', {
           check: scriptName,
           network: scriptResults[scriptName].network,
@@ -252,6 +261,7 @@ class SandboxProjectEvaluator {
         scripts: scriptResults,
       };
     } catch (error) {
+      if (isCancellationError(error, signal)) throw error;
       return {
         sandbox: {
           requested: true,

@@ -2,7 +2,7 @@
 
 Local AI Agent Router is a local-first backend for classifying coding tasks, routing them to local coding agents, evaluating their changes, and keeping a human in control of merges.
 
-Phase 12 adds a local React Dashboard over the existing request/response APIs. Project scripts still run only in disposable Docker snapshots, Coding Agents default to an isolated Docker backend, and fingerprint-bound human approval remains the only path to a local merge.
+Phase 14 adds a persistent local Job queue, bounded concurrency, cancellation, retry, priority, and restart recovery while preserving the Phase 12 Dashboard, Phase 13 SSE observability, isolated execution, and fingerprint-bound human approval.
 
 ## Requirements
 
@@ -570,7 +570,7 @@ The Run Session uses a live evidence timeline and Activity/Terminal tabs. Struct
 
 The Dashboard does not enable Agent execution, change configuration, install models/Agents, push Git remotes, or make backend approval decisions. An evaluation pass and a competition winner remain candidate evidence—not a merge. Approval sends exactly the fingerprint returned by the current review and never retries a conflict automatically. A `candidate_changed`, `stale_base`, dirty-target, or wrong-branch conflict requires the human to refresh and review again.
 
-The interactive Dashboard starts work through the Phase 13 real-time APIs. Existing synchronous task APIs remain available for earlier clients. Phase 13 does not add job cancellation, retry, scheduling, priority, persistence, or a task queue.
+The interactive Dashboard starts work through the Phase 14 Job API and observes its associated Phase 13 run stream. Existing synchronous task APIs and Phase 13 start routes remain available for earlier clients; the latter now submit exactly one Job into the same scheduler path.
 
 Dashboard development:
 
@@ -617,8 +617,51 @@ Runtime memory is bounded by:
 - `REALTIME_SESSION_TTL_MS=1800000` for finished sessions
 - `REALTIME_HEARTBEAT_MS=15000` per SSE connection
 
-These sessions are deliberately ephemeral. A server restart loses the live runtime session, while completed task metadata remains available through the Phase 9 SQLite History. There is no queue, retry, cancellation, priority, scheduling, or restart recovery in Phase 13.
+The SSE session itself remains bounded and in memory. Phase 14 associates each session with a persistent Job; queued Jobs are recreated as live sessions after restart, while formerly active Jobs are marked interrupted rather than resumed unsafely. Completed task metadata remains separate in the Phase 9 SQLite History.
 
 Raw Agent stdout and stderr are **not streamed live**. They can contain secrets or sensitive file content before the Evaluator has applied its policy. The Activity tab therefore receives trusted system-generated lifecycle evidence only, and the Terminal tab explains that live output is withheld. SSE events and snapshots exclude raw output, tracked diff content, candidate fingerprints, environment values, and stack traces. Candidate review and exact-fingerprint approval continue through the Phase 10 endpoints and never happen automatically.
 
 The opt-in Phase 13 live validation used the canonical `qwen3:8b` model and Qwen Code inside the existing Docker Agent sandbox. It created only `README.md` in a disposable candidate worktree, produced ordered unique lifecycle events through evaluation and `candidate_ready`, left the original repository clean and uncommitted, performed no merge or remote push, and removed the temporary sandbox after completion.
+
+## Task Queue & Job Manager
+
+Phase 14 distinguishes four related records:
+
+- A **Task** is the coding request.
+- A **Job** is one persistent scheduled attempt to execute that request.
+- A **Run Session** is the bounded SSE view for one Job.
+- **Task History** stores the evaluated long-term outcome and remains separate from scheduling metadata.
+
+The Dashboard submits `POST /api/jobs`, then opens `/runs/:runId`. Jobs are stored in the non-destructive SQLite `jobs` table before scheduling. The scheduler atomically claims work in `priority DESC, created_at ASC, id ASC` order. Priorities are Low `25`, Normal `50`, High `75`, and Urgent `100`; Normal is the default. The Queue page shows active, queued, and recent attempts, current queue positions, attempt ancestry, and safe Cancel/Retry actions. The System page exposes read-only scheduler capacity.
+
+```text
+Browser -> Job API -> SQLite Job -> Priority Queue -> Scheduler
+                                                   |
+                                            Worker slot
+                                                   |
+                         Router -> Agent -> Evaluator -> Candidate
+                                                   |
+                                      History + SSE events
+```
+
+`JOB_MAX_CONCURRENT=1` is the safe default because top-level Jobs share local Ollama, GPU/VRAM, CPU, RAM, and Docker resources. A configured value from 1 through 16 is supported, but Phase 14 uses one global limit rather than per-GPU scheduling. One sequential competition consumes one top-level slot; its competitors do not become separate queue Jobs.
+
+Cancellation is stateful, not deletion. A queued Job becomes cancelled without creating a worktree or execution history. An active Job first becomes `cancel_requested`; its scheduler-owned `AbortController` is passed through the Agent backend, safe process runner, sandbox, and evaluator. HTTP callers provide only the Job ID and can never supply a PID, container ID, command, or worktree path. Partial worktrees are conservatively preserved for diagnostics, are not valid Candidates without completed evaluation, and are never merged automatically.
+
+Retry creates a new Job with a new Job ID and Run ID, increments `attempt`, and records `parentJobId`; the failed, cancelled, or interrupted original remains immutable. Completed and active Jobs cannot be retried. Cancelled and restart-interrupted work does not create a failed Agent performance record, so operator actions do not unfairly reduce adaptive-routing quality.
+
+On startup, queued Jobs remain queued and resume scheduling. Old `starting`, `running`, `evaluating`, or `cancel_requested` records become `interrupted` with reason `server_restart`; they never resume automatically because process, sandbox, and worktree state may be uncertain. Explicit Retry is required. Graceful shutdown stops new claims, aborts owned active work best effort, and keeps the persistent queue.
+
+Job endpoints:
+
+```text
+POST  /api/jobs
+GET   /api/jobs?status=queued&limit=20
+GET   /api/jobs/stats
+GET   /api/jobs/:id
+POST  /api/jobs/:id/cancel
+POST  /api/jobs/:id/retry
+PATCH /api/jobs/:id/priority
+```
+
+This remains a local, single-Router scheduler. Multiple Router processes sharing one database, distributed workers, priority aging, advanced GPU scheduling, and automatic recovery of interrupted Jobs are not supported.

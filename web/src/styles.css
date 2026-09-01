@@ -141,6 +141,9 @@ legend { margin-bottom: 8px; font-size: .78rem; font-weight: 650; }
 .agent-option.disabled { cursor: not-allowed; opacity: .55; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: .8rem; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.priority-field { display: grid; grid-template-columns: auto minmax(150px, 240px); align-items: center; gap: 8px 12px; }
+.priority-field > label { margin: 0; }
+.numeric-priority { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(100px, 160px); align-items: center; gap: 12px; }
 .inline-form { display: grid; grid-template-columns: auto minmax(200px, 1fr) auto; align-items: center; gap: 10px; }
 .filter-row { display: grid; grid-template-columns: auto minmax(160px, 1fr) auto minmax(160px, 1fr); align-items: center; gap: 10px; }
 .validation-error { margin-top: 8px; color: var(--danger); font-size: .8rem; font-weight: 650; }
@@ -301,6 +304,20 @@ legend { margin-bottom: 8px; font-size: .78rem; font-weight: 650; }
 .live-evaluation-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .live-competitors { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .live-competitors article { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-secondary); }
+.live-job-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+.queue-sections, .job-list { display: grid; gap: 12px; }
+.job-card { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-secondary); }
+.job-card-main { width: 100%; min-height: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 0; border: 0; background: transparent; color: var(--text-primary); text-align: left; }
+.job-card-main > span:first-child, .job-card-state { display: grid; min-width: 0; gap: 4px; }
+.job-card-main strong { overflow-wrap: anywhere; }
+.job-card-state { flex: 0 0 auto; justify-items: end; }
+.job-card-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; color: var(--text-secondary); font-size: .7rem; }
+.job-card-meta .mono { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.job-actions label { display: grid; gap: 4px; color: var(--text-secondary); font-size: .7rem; }
+.job-actions select { min-height: 36px; }
+.job-note { margin: 10px 0 0; color: var(--warning); font-size: .74rem; }
 
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; text-align: left; font-size: .78rem; }
@@ -339,6 +356,7 @@ td { padding: 10px 9px; border-bottom: 1px solid var(--border); vertical-align: 
   .candidate-review-panel { grid-column: auto; }
   .mode-grid, .metric-grid, .file-columns, .resource-placeholder { grid-template-columns: 1fr; }
   .inline-form, .filter-row { grid-template-columns: 1fr; align-items: stretch; }
+  .priority-field, .numeric-priority { grid-template-columns: 1fr; }
   .ranking-row { grid-template-columns: 24px 1fr; }
   .ranking-scores, .ranking-state { grid-column: 2; }
   .history-tools label { grid-template-columns: 1fr; }

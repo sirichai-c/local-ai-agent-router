@@ -170,6 +170,7 @@ class SandboxService {
     network = 'none',
     timeoutMs = this.timeoutMs,
     purpose = 'check',
+    signal,
   }) {
     if (!this.enabled) {
       throw new SandboxError('Sandbox execution is disabled.', 'SANDBOX_DISABLED');
@@ -194,6 +195,7 @@ class SandboxService {
         cwd: process.cwd(),
         env: {},
         timeoutMs,
+        signal,
       });
     } finally {
       await this.removeContainer(containerName);

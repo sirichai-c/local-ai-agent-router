@@ -13,6 +13,7 @@ const {
 const {
   createTemporaryDatabase,
 } = require('../test-support/database-test.helper');
+const { ExecutionCancelledError } = require('../src/services/cancellation.service');
 
 const baseCommit = 'a'.repeat(40);
 const repo = 'C:\\Projects\\competition-repo';
@@ -178,6 +179,27 @@ test('candidate execution is strictly sequential', async () => {
     'start:qwen-code',
     'end:qwen-code',
   ]);
+});
+
+test('competition cancellation stops the active Agent, skips later Agents, and records no Winner', async () => {
+  const controller = new AbortController();
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  const { calls, service } = createHarness({
+    execute: (input) => new Promise((_resolve, reject) => {
+      firstStarted();
+      input.signal.addEventListener('abort', () => reject(new ExecutionCancelledError()), { once: true });
+    }),
+  });
+  const competition = service.compete({
+    task: 'task', workspace: repo, signal: controller.signal,
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(competition, (error) => error.code === 'JOB_CANCELLED');
+  assert.equal(calls.execute.length, 1);
+  assert.deepEqual(calls.history.runs, []);
+  assert.equal(calls.history.complete.at(-1)[1], 'cancelled');
 });
 
 test('one agent failure does not abort remaining candidates', async () => {

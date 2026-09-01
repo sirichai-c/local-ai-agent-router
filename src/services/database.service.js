@@ -5,7 +5,7 @@ const BetterSqlite3 = require('better-sqlite3');
 
 const { config } = require('../config/env');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
 
 const SCHEMA_SQL = `
@@ -70,6 +70,41 @@ const SCHEMA_SQL = `
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('single', 'competition')),
+    task_text TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN (
+      'queued', 'starting', 'running', 'evaluating', 'completed', 'failed',
+      'cancel_requested', 'cancelled', 'interrupted'
+    )),
+    priority INTEGER NOT NULL CHECK(priority >= 0 AND priority <= 100),
+    requested_agents TEXT,
+    attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt >= 1),
+    parent_job_id TEXT,
+    run_id TEXT NOT NULL UNIQUE,
+    task_id TEXT,
+    competition_id TEXT,
+    created_at TEXT NOT NULL,
+    queued_at TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    cancel_requested_at TEXT,
+    cancelled_at TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    result_status TEXT,
+    FOREIGN KEY(parent_job_id) REFERENCES jobs(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_jobs_queue
+    ON jobs(status, priority DESC, created_at ASC, id ASC);
+  CREATE INDEX IF NOT EXISTS idx_jobs_created
+    ON jobs(created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_jobs_parent
+    ON jobs(parent_job_id);
 `;
 
 const PHASE_10_TASK_COLUMNS = Object.freeze({
@@ -112,6 +147,53 @@ function applyPhase10Migration(connection, appliedAt = new Date().toISOString())
       VALUES (?, ?)
     `).run(2, appliedAt);
     connection.pragma('user_version = 2');
+  });
+
+  migrate();
+}
+
+function applyPhase14Migration(connection, appliedAt = new Date().toISOString()) {
+  const migrate = connection.transaction(() => {
+    connection.exec(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('single', 'competition')),
+        task_text TEXT NOT NULL,
+        workspace TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'queued', 'starting', 'running', 'evaluating', 'completed', 'failed',
+          'cancel_requested', 'cancelled', 'interrupted'
+        )),
+        priority INTEGER NOT NULL CHECK(priority >= 0 AND priority <= 100),
+        requested_agents TEXT,
+        attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt >= 1),
+        parent_job_id TEXT,
+        run_id TEXT NOT NULL UNIQUE,
+        task_id TEXT,
+        competition_id TEXT,
+        created_at TEXT NOT NULL,
+        queued_at TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        cancel_requested_at TEXT,
+        cancelled_at TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        result_status TEXT,
+        FOREIGN KEY(parent_job_id) REFERENCES jobs(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_jobs_queue
+        ON jobs(status, priority DESC, created_at ASC, id ASC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_created
+        ON jobs(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_parent
+        ON jobs(parent_job_id);
+    `);
+    connection.prepare(`
+      INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+      VALUES (?, ?)
+    `).run(3, appliedAt);
+    connection.pragma('user_version = 3');
   });
 
   migrate();
@@ -177,6 +259,10 @@ class DatabaseService {
     if (currentVersion < 2) {
       applyPhase10Migration(connection);
     }
+
+    if (currentVersion < 3) {
+      applyPhase14Migration(connection);
+    }
   }
 
   getConnection() {
@@ -216,6 +302,7 @@ module.exports = {
   SCHEMA_VERSION,
   addMissingColumns,
   applyPhase10Migration,
+  applyPhase14Migration,
   databaseService,
   resolveDatabasePath,
 };

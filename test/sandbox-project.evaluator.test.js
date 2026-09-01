@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const {
   SandboxProjectEvaluator,
 } = require('../src/evaluators/sandbox-project.evaluator');
+const { ExecutionCancelledError } = require('../src/services/cancellation.service');
 
 function createHarness({ installResult, scriptResults = {} } = {}) {
   const calls = [];
@@ -180,4 +181,35 @@ test('unavailable sandbox fails closed without host script execution', async () 
   assert.equal(snapshotCreated, false);
   assert.equal(result.scripts.test.executed, false);
   assert.equal(result.scripts.test.reason, 'sandbox_image_unavailable');
+});
+
+test('evaluation cancellation stops later scripts and still cleans its disposable snapshot', async () => {
+  const controller = new AbortController();
+  const calls = [];
+  let cleaned = false;
+  let installStarted;
+  const started = new Promise((resolve) => { installStarted = resolve; });
+  const evaluator = new SandboxProjectEvaluator({
+    access: async () => {},
+    snapshots: {
+      create: async () => ({ sandboxId: 'a'.repeat(16), snapshotPath: '/runs/id/workspace' }),
+      cleanup: async () => { cleaned = true; },
+    },
+    sandbox: {
+      inspectAvailability: async () => ({ available: true, image: 'safe:1' }),
+      run: (input) => new Promise((_resolve, reject) => {
+        calls.push(input.purpose);
+        installStarted();
+        input.signal.addEventListener('abort', () => reject(new ExecutionCancelledError()), { once: true });
+      }),
+    },
+  });
+  const evaluation = evaluator.evaluate({
+    workspace: '/candidate', scripts: { test: 'x', lint: 'x' }, signal: controller.signal,
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(evaluation, (error) => error.code === 'JOB_CANCELLED');
+  assert.deepEqual(calls, ['dependency-install']);
+  assert.equal(cleaned, true);
 });

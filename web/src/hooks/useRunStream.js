@@ -65,7 +65,18 @@ export function useRunStream(runId, {
         const events = [...current.events, event]
           .sort((left, right) => left.id - right.id)
           .slice(-eventLimit);
-        const terminal = event.type === 'run_completed' || event.type === 'run_failed';
+        const terminal = ['run_completed', 'run_failed', 'job_cancelled', 'job_interrupted']
+          .includes(event.type);
+        const eventState = {
+          run_completed: 'completed',
+          run_failed: 'failed',
+          job_queued: 'queued',
+          job_starting: 'starting',
+          job_running: 'running',
+          job_cancel_requested: 'cancel_requested',
+          job_cancelled: 'cancelled',
+          job_interrupted: 'interrupted',
+        }[event.type];
         return {
           ...current,
           loading: false,
@@ -75,20 +86,16 @@ export function useRunStream(runId, {
               ...current.session,
               currentStage: event.stage,
               lastEventId: Math.max(current.session.lastEventId || 0, event.id),
-              state: event.type === 'run_completed'
-                ? 'completed'
-                : event.type === 'run_failed'
-                  ? 'failed'
-                  : event.stage === 'evaluation'
-                    ? 'evaluating'
-                    : 'running',
+              state: eventState || (event.stage === 'evaluation'
+                ? 'evaluating'
+                : current.session.state),
             }
             : current.session,
           connectionState: terminal ? 'complete' : current.connectionState,
         };
       });
 
-      if (event.type === 'run_completed' || event.type === 'run_failed') {
+      if (['run_completed', 'run_failed', 'job_cancelled', 'job_interrupted'].includes(event.type)) {
         refreshSnapshot();
         subscription?.close();
       }
@@ -109,8 +116,8 @@ export function useRunStream(runId, {
           if (active) setView((current) => ({
             ...current,
             connected: false,
-            connectionState: current.session?.state === 'completed'
-              || current.session?.state === 'failed'
+            connectionState: ['completed', 'failed', 'cancelled', 'interrupted']
+              .includes(current.session?.state)
               ? 'complete'
               : 'reconnecting',
             error: error.code === 'INVALID_RUN_EVENT' ? error : current.error,

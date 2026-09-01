@@ -32,6 +32,7 @@ const DEFAULT_SANDBOX_RUN_ROOT = './.sandbox-runs';
 const DEFAULT_REALTIME_EVENT_LIMIT = 300;
 const DEFAULT_REALTIME_SESSION_TTL_MS = 1_800_000;
 const DEFAULT_REALTIME_HEARTBEAT_MS = 15_000;
+const DEFAULT_JOB_MAX_CONCURRENT = 1;
 
 function parsePort(value) {
   if (value === undefined || value === '') {
@@ -369,6 +370,15 @@ const config = Object.freeze({
       'REALTIME_HEARTBEAT_MS',
       1_000,
       60_000,
+    ),
+  }),
+  jobs: Object.freeze({
+    maxConcurrent: parseIntegerInRange(
+      process.env.JOB_MAX_CONCURRENT,
+      DEFAULT_JOB_MAX_CONCURRENT,
+      'JOB_MAX_CONCURRENT',
+      1,
+      16,
     ),
   }),
 });

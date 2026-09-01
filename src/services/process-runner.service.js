@@ -72,7 +72,7 @@ class ProcessRunner {
     this.defaultMaxOutputBytes = defaultMaxOutputBytes;
   }
 
-  validateInput({ command, args, cwd, env, timeoutMs, maxOutputBytes }) {
+  validateInput({ command, args, cwd, env, timeoutMs, maxOutputBytes, signal }) {
     if (typeof command !== 'string' || command.trim() === '') {
       throw new TypeError('command must be a non-empty string');
     }
@@ -102,6 +102,12 @@ class ProcessRunner {
     if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1) {
       throw new TypeError('maxOutputBytes must be a positive integer');
     }
+
+    if (signal !== undefined
+      && (!signal || typeof signal.aborted !== 'boolean'
+        || typeof signal.addEventListener !== 'function')) {
+      throw new TypeError('signal must be an AbortSignal');
+    }
   }
 
   runProcess({
@@ -111,6 +117,7 @@ class ProcessRunner {
     env = {},
     timeoutMs = this.defaultTimeoutMs,
     maxOutputBytes = this.defaultMaxOutputBytes,
+    signal,
   }) {
     this.validateInput({
       command,
@@ -119,6 +126,7 @@ class ProcessRunner {
       env,
       timeoutMs,
       maxOutputBytes,
+      signal,
     });
 
     return new Promise((resolve) => {
@@ -127,11 +135,12 @@ class ProcessRunner {
       let capturedBytes = 0;
       let outputTruncated = false;
       let timedOut = false;
+      let aborted = false;
       let settled = false;
       let processError = null;
       let timeoutHandle;
-      let forceKillHandle;
       let child;
+      let abortListener;
 
       const appendOutput = (chunks, data) => {
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -151,22 +160,23 @@ class ProcessRunner {
         }
       };
 
-      const finish = (exitCode, signal = null) => {
+      const finish = (exitCode, exitSignal = null) => {
         if (settled) {
           return;
         }
 
         settled = true;
         clearTimeout(timeoutHandle);
-        clearTimeout(forceKillHandle);
+        if (signal && abortListener) signal.removeEventListener('abort', abortListener);
 
         resolve({
           command,
           args: [...args],
           cwd,
           exitCode: Number.isInteger(exitCode) ? exitCode : null,
-          signal,
+          signal: exitSignal,
           timedOut,
+          aborted,
           stdout: Buffer.concat(stdoutChunks).toString('utf8'),
           stderr: Buffer.concat(stderrChunks).toString('utf8'),
           outputTruncated,
@@ -175,6 +185,11 @@ class ProcessRunner {
       };
 
       try {
+        if (signal?.aborted) {
+          aborted = true;
+          finish(null);
+          return;
+        }
         child = this.spawnImpl(command, args, {
           cwd,
           shell: false,
@@ -206,22 +221,27 @@ class ProcessRunner {
       child.once('close', (exitCode, signal) => finish(exitCode, signal));
       child.stdin?.end();
 
-      timeoutHandle = setTimeout(() => {
-        timedOut = true;
-
+      const terminate = () => {
         try {
-          child.kill();
-          forceKillHandle = setTimeout(() => {
-            try {
-              this.processTreeKiller(child);
-            } catch {
-              // Best effort only. Full process-tree isolation arrives in Phase 11.
-            }
-          }, 1_000);
+          this.processTreeKiller(child);
         } catch (error) {
           processError = error;
           appendOutput(stderrChunks, `Process termination failed: ${error.message}`);
         }
+      };
+
+      if (signal) {
+        abortListener = () => {
+          if (settled || aborted) return;
+          aborted = true;
+          terminate();
+        };
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
+
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        terminate();
       }, timeoutMs);
     });
   }

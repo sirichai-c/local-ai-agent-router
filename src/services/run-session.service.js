@@ -4,14 +4,19 @@ const { config } = require('../config/env');
 
 const RUN_TYPES = Object.freeze(new Set(['single', 'competition']));
 const RUN_STATES = Object.freeze(new Set([
+  'queued',
   'starting',
   'running',
   'evaluating',
   'completed',
   'failed',
+  'cancel_requested',
+  'cancelled',
+  'interrupted',
 ]));
 const RUN_STAGES = Object.freeze(new Set([
   'initializing',
+  'queue',
   'routing',
   'repository',
   'worktree',
@@ -23,6 +28,17 @@ const RUN_STAGES = Object.freeze(new Set([
   'failed',
 ]));
 const RUN_EVENT_TYPES = Object.freeze(new Set([
+  'job_created',
+  'job_queued',
+  'job_starting',
+  'job_running',
+  'job_cancel_requested',
+  'job_cancelled',
+  'job_failed',
+  'job_interrupted',
+  'job_completed',
+  'job_retry_created',
+  'queue_position',
   'run_started',
   'router_analyzing',
   'router_completed',
@@ -53,6 +69,8 @@ const RUN_EVENT_STATUSES = Object.freeze(new Set([
   'completed',
   'failed',
   'warning',
+  'cancelled',
+  'interrupted',
 ]));
 
 class RunSessionError extends Error {
@@ -140,27 +158,42 @@ class RunSessionService {
     }
   }
 
-  create(type) {
+  create(type, {
+    id: suppliedId,
+    jobId = null,
+    initialState = 'starting',
+  } = {}) {
     if (!RUN_TYPES.has(type)) {
       throw new RunSessionError('Run type must be single or competition.', 'RUN_TYPE_INVALID');
     }
 
-    let id;
+    if (!RUN_STATES.has(initialState)) {
+      throw new RunSessionError('Initial run state is invalid.', 'RUN_STATE_INVALID');
+    }
 
-    do {
-      id = this.idFactory();
-    } while (this.sessions.has(id));
+    let id = suppliedId;
+
+    if (id !== undefined) {
+      if (typeof id !== 'string' || id.trim() === '' || this.sessions.has(id)) {
+        throw new RunSessionError('Run session ID is invalid or already used.', 'RUN_ID_INVALID');
+      }
+    } else {
+      do {
+        id = this.idFactory();
+      } while (this.sessions.has(id));
+    }
 
     const startedAt = this.clock().toISOString();
     const session = {
       id,
       type,
-      state: 'starting',
+      state: initialState,
       startedAt,
       completedAt: null,
       taskId: null,
       competitionId: null,
-      currentStage: 'initializing',
+      jobId,
+      currentStage: initialState === 'queued' ? 'queue' : 'initializing',
       nextEventId: 1,
       events: [],
       result: null,
@@ -189,6 +222,7 @@ class RunSessionService {
       completedAt: session.completedAt,
       taskId: session.taskId,
       competitionId: session.competitionId,
+      jobId: session.jobId,
       currentStage: session.currentStage,
       lastEventId: session.nextEventId - 1,
       result: session.result,
@@ -196,7 +230,7 @@ class RunSessionService {
     });
   }
 
-  updateIdentity(id, { taskId, competitionId } = {}) {
+  updateIdentity(id, { taskId, competitionId, jobId } = {}) {
     const session = this.getInternal(id);
 
     if (!session) throw new RunSessionError('Run session not found.', 'RUN_NOT_FOUND', 404);
@@ -206,6 +240,7 @@ class RunSessionService {
       session.competitionId = competitionId;
       session.taskId = competitionId;
     }
+    if (typeof jobId === 'string' && jobId) session.jobId = jobId;
 
     return this.snapshot(id);
   }
@@ -216,7 +251,7 @@ class RunSessionService {
     if (!session) throw new RunSessionError('Run session not found.', 'RUN_NOT_FOUND', 404);
 
     if (RUN_STATES.has(session.state)
-      && ['completed', 'failed'].includes(session.state)) {
+      && ['completed', 'failed', 'cancelled', 'interrupted'].includes(session.state)) {
       throw new RunSessionError('Run session is already finished.', 'RUN_ALREADY_FINISHED', 409);
     }
 
@@ -230,8 +265,14 @@ class RunSessionService {
     session.nextEventId += 1;
     session.currentStage = event.stage;
 
-    if (event.type === 'evaluation_starting') session.state = 'evaluating';
-    else if (event.type !== 'run_started') session.state = 'running';
+    if (event.type === 'job_queued') session.state = 'queued';
+    else if (event.type === 'job_starting') session.state = 'starting';
+    else if (event.type === 'job_running') session.state = 'running';
+    else if (event.type === 'job_cancel_requested') session.state = 'cancel_requested';
+    else if (event.type === 'evaluation_starting') session.state = 'evaluating';
+    else if (!['run_started', 'job_created', 'queue_position', 'job_completed', 'job_failed', 'job_retry_created'].includes(event.type)) {
+      session.state = 'running';
+    }
 
     session.events.push(event);
     if (session.events.length > this.eventLimit) {
@@ -307,6 +348,36 @@ class RunSessionService {
       },
     });
     session.state = 'failed';
+    session.completedAt = this.clock().toISOString();
+    return event;
+  }
+
+  cancel(id, eventData = {}) {
+    const session = this.getInternal(id);
+    if (!session) throw new RunSessionError('Run session not found.', 'RUN_NOT_FOUND', 404);
+    const event = this.append(id, {
+      type: 'job_cancelled',
+      stage: 'queue',
+      status: 'cancelled',
+      messageKey: 'run.jobCancelled',
+      data: eventData,
+    });
+    session.state = 'cancelled';
+    session.completedAt = this.clock().toISOString();
+    return event;
+  }
+
+  interrupt(id, eventData = {}) {
+    const session = this.getInternal(id);
+    if (!session) throw new RunSessionError('Run session not found.', 'RUN_NOT_FOUND', 404);
+    const event = this.append(id, {
+      type: 'job_interrupted',
+      stage: 'failed',
+      status: 'interrupted',
+      messageKey: 'run.jobInterrupted',
+      data: eventData,
+    });
+    session.state = 'interrupted';
     session.completedAt = this.clock().toISOString();
     return event;
   }

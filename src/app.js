@@ -10,10 +10,12 @@ const performanceRoutes = require('./routes/performance.routes');
 const routerRoutes = require('./routes/router.routes');
 const taskRoutes = require('./routes/task.routes');
 const defaultRunRoutes = require('./routes/run.routes');
+const defaultJobRoutes = require('./routes/job.routes');
 
 function createApp({
   frontendDistPath = path.resolve(__dirname, '..', 'web', 'dist'),
   runRoutes = defaultRunRoutes,
+  jobRoutes = defaultJobRoutes,
 } = {}) {
   const app = express();
 
@@ -24,6 +26,7 @@ function createApp({
   app.use('/api', ollamaRoutes);
   app.use('/api/agents', agentRoutes);
   app.use('/api/history', historyRoutes);
+  app.use('/api/jobs', jobRoutes);
   app.use('/api/performance', performanceRoutes);
   app.use('/api/router', routerRoutes);
   app.use('/api/runs', runRoutes);

@@ -5,7 +5,7 @@ import { Icon } from './Icon';
 
 const GROUPS = [
   ['nav.group.overview', [['/', 'nav.overview', 'home'], ['/new-task', 'nav.newTask', 'plus']]],
-  ['nav.group.work', [['/runs', 'nav.runs', 'play'], ['/competitions', 'nav.competitions', 'competition'], ['/candidates', 'nav.candidates', 'candidate']]],
+  ['nav.group.work', [['/runs', 'nav.runs', 'play'], ['/queue', 'nav.queue', 'queue'], ['/competitions', 'nav.competitions', 'competition'], ['/candidates', 'nav.candidates', 'candidate']]],
   ['nav.group.insights', [['/history', 'nav.history', 'history'], ['/performance', 'nav.performance', 'performance']]],
   ['nav.group.system', [['/agents', 'nav.agents', 'agent'], ['/models', 'nav.models', 'model'], ['/system', 'nav.system', 'system'], ['/settings', 'nav.settings', 'settings']]],
 ];

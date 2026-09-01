@@ -12,8 +12,10 @@ function createApi() {
       { id: 'aider', name: 'Aider', available: false, runtime: 'docker' },
     ] }),
     analyzeTask: vi.fn().mockResolvedValue({ classification: { coding: 80 }, ranking: [] }),
-    startExecution: vi.fn().mockResolvedValue({ runId: 'run-single', state: 'starting' }),
-    startCompetition: vi.fn().mockResolvedValue({ runId: 'run-competition', state: 'starting' }),
+    submitJob: vi.fn().mockImplementation(async ({ type }) => ({
+      runId: type === 'competition' ? 'run-competition' : 'run-single',
+      job: { id: `job-${type}`, status: 'queued' },
+    })),
   };
 }
 
@@ -23,7 +25,7 @@ describe('Run Task page', () => {
     render(<RunTaskPage api={api} onNavigate={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Run' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Task is required');
-    expect(api.startExecution).not.toHaveBeenCalled();
+    expect(api.submitJob).not.toHaveBeenCalled();
   });
 
   it('submits Auto Agent request and prevents duplicate clicks while pending', async () => {
@@ -34,7 +36,13 @@ describe('Run Task page', () => {
     await userEvent.type(screen.getByLabelText('Workspace / Repo Path'), 'C:\\repo');
     await userEvent.click(screen.getByLabelText('Analyze before execution'));
     await userEvent.click(screen.getByRole('button', { name: 'Run' }));
-    expect(api.startExecution).toHaveBeenCalledWith({ task: 'Fix API validation', workspace: 'C:\\repo' });
+    expect(api.submitJob).toHaveBeenCalledWith({
+      type: 'single',
+      task: 'Fix API validation',
+      workspace: 'C:\\repo',
+      agents: undefined,
+      priority: 50,
+    });
     expect(onNavigate).toHaveBeenCalledWith('/runs/run-single');
   });
 
@@ -50,7 +58,24 @@ describe('Run Task page', () => {
     expect(screen.getByLabelText(/Aider/u)).toBeDisabled();
     await userEvent.click(screen.getByLabelText('Analyze before execution'));
     await userEvent.click(screen.getByRole('button', { name: 'Run Competition' }));
-    expect(api.startCompetition).toHaveBeenCalledWith({ task: 'Improve docs', workspace: 'C:\\repo', agents: ['opencode', 'qwen-code'] });
+    expect(api.submitJob).toHaveBeenCalledWith({
+      type: 'competition',
+      task: 'Improve docs',
+      workspace: 'C:\\repo',
+      agents: ['opencode', 'qwen-code'],
+      priority: 50,
+    });
     expect(onNavigate).toHaveBeenCalledWith('/runs/run-competition');
+  });
+
+  it('submits the selected Job priority and exposes numeric priority in Advanced mode', async () => {
+    const api = createApi();
+    render(<RunTaskPage api={api} onNavigate={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('What do you want the agents to do?'), 'Urgent docs fix');
+    await userEvent.type(screen.getByLabelText('Workspace / Repo Path'), 'C:\\repo');
+    await userEvent.selectOptions(screen.getByLabelText('Priority'), '100');
+    await userEvent.click(screen.getByLabelText('Analyze before execution'));
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }));
+    expect(api.submitJob).toHaveBeenCalledWith(expect.objectContaining({ priority: 100 }));
   });
 });

@@ -3,6 +3,7 @@ import { EvaluationCard } from '../components/EvaluationCard';
 import { CompetitionTable } from '../components/CompetitionTable';
 import {
   EmptyState,
+  ConfirmDialog,
   ErrorNotice,
   LoadingState,
   Metric,
@@ -15,7 +16,8 @@ import { useI18n } from '../i18n/I18nContext';
 import { formatDuration, formatScore } from '../utils/format';
 
 const TIMELINE_STEPS = [
-  ['started', ['run_started'], []],
+  ['job', ['job_created'], []],
+  ['queue', ['job_starting', 'job_running'], ['job_queued', 'queue_position', 'job_cancel_requested']],
   ['routing', ['router_completed'], ['router_analyzing']],
   ['repository', ['repository_validated'], ['repository_validating']],
   ['worktree', ['worktree_created'], ['worktree_creating']],
@@ -31,6 +33,8 @@ function eventDetail(event) {
     data.targetBranch,
     data.check,
     data.verdict,
+    Number.isFinite(data.position) ? `#${data.position}` : null,
+    Number.isFinite(data.priority) ? `P${data.priority}` : null,
     Number.isFinite(data.score) ? `${data.score}/100` : null,
   ].filter(Boolean).join(' · ');
 }
@@ -107,13 +111,29 @@ function CompetitionProgress({ events, result }) {
   return <Panel title={t('run.competitionProgress')}>{agents.length ? <div className="live-competitors">{agents.map((agent) => <article key={agent.agentId}><strong>{agent.agentId}</strong><StatusBadge value={agent.status} />{agent.score !== undefined && agent.score !== null && <span>{formatScore(agent.score)} · {agent.verdict}</span>}</article>)}</div> : <EmptyState>{t('run.competitionWaiting')}</EmptyState>}</Panel>;
 }
 
-export function LiveRunPage({ api, runId, useStream = useRunStream }) {
+export function LiveRunPage({ api, runId, useStream = useRunStream, onNavigate = (path) => { window.location.href = path; } }) {
   const { t } = useI18n();
   const live = useStream(runId, { api });
   const [tab, setTab] = useState('activity');
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState(null);
   const session = live.session;
   const result = session?.result;
   const taskId = session?.taskId || session?.competitionId || result?.taskId || result?.competitionId;
+  const queueEvent = [...live.events].reverse().find((event) => event.type === 'queue_position');
+  const cancellable = ['queued', 'starting', 'running', 'evaluating', 'cancel_requested'].includes(session?.state);
+  const retryable = ['failed', 'cancelled', 'interrupted'].includes(session?.state);
+  const cancelJob = async () => {
+    setActionBusy(true); setActionError(null);
+    try { await api.cancelJob(session.jobId); setConfirmCancel(false); } catch (error) { setActionError(error); }
+    finally { setActionBusy(false); }
+  };
+  const retryJob = async () => {
+    setActionBusy(true); setActionError(null);
+    try { const retried = await api.retryJob(session.jobId); onNavigate(`/runs/${encodeURIComponent(retried.runId)}`); } catch (error) { setActionError(error); }
+    finally { setActionBusy(false); }
+  };
 
   if (live.loading) return <LoadingState label={t('run.connecting')} />;
   if (live.expired) return <><PageHeader eyebrow="REAL-TIME" title={t('run.liveTitle')} /><Panel><EmptyState>{t('run.expired')}</EmptyState>{taskId && <a className="button-link standalone-link" href={`/history/${encodeURIComponent(taskId)}`}>{t('run.viewHistory')}</a>}</Panel></>;
@@ -121,12 +141,15 @@ export function LiveRunPage({ api, runId, useStream = useRunStream }) {
   return <>
     <PageHeader eyebrow="REAL-TIME" title={t('run.liveTitle')} description={t('run.liveSubtitle')} action={<ConnectionStatus state={live.connectionState} />} />
     <ErrorNotice error={live.error} />
+    <ErrorNotice error={actionError} />
     {session?.state === 'failed' && <div className="state-message error-message" role="alert"><strong>{t('run.failed')}</strong><span>{session.error?.message || t('errors.server')}</span></div>}
     {live.connectionState === 'reconnecting' && <div className="state-message warning-message">{t('run.connectionLost')}</div>}
-    <Panel><div className="metric-grid metric-grid-compact"><Metric label={t('run.runId')} value={runId} mono /><Metric label={t('run.taskId')} value={taskId || t('common.notAvailable')} mono /><Metric label="Status" value={<StatusBadge value={session?.state || 'starting'} />} /><Metric label={t('run.duration')} value={formatDuration(result?.execution?.durationMs)} /></div></Panel>
+    {session?.state === 'interrupted' && <div className="state-message warning-message">{t('job.interruptedHelp')}</div>}
+    <Panel><div className="metric-grid metric-grid-compact"><Metric label={t('job.id')} value={session?.jobId || t('common.notAvailable')} mono /><Metric label={t('run.runId')} value={runId} mono /><Metric label={t('run.taskId')} value={taskId || t('common.notAvailable')} mono /><Metric label={t('job.status')} value={<StatusBadge value={session?.state || 'starting'} />} /><Metric label={t('job.position')} value={queueEvent?.data?.position || t('common.notAvailable')} /><Metric label={t('job.priority')} value={queueEvent?.data?.priority ?? t('common.notAvailable')} /><Metric label={t('run.duration')} value={formatDuration(result?.execution?.durationMs)} /></div><div className="live-job-actions">{cancellable && <button type="button" className="button-danger" disabled={actionBusy || session.state === 'cancel_requested'} onClick={() => setConfirmCancel(true)}>{session.state === 'cancel_requested' ? t('job.cancelling') : t('job.cancel')}</button>}{retryable && session?.jobId && <button type="button" disabled={actionBusy} onClick={retryJob}>{t('job.retry')}</button>}</div></Panel>
     <div className="run-session-grid"><Panel title={t('run.timeline')}><LiveTimeline events={live.events} /></Panel><Panel title={t('run.session')}><div className="tab-list" role="tablist"><button type="button" role="tab" aria-selected={tab === 'activity'} className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}>{t('run.activity')}</button><button type="button" role="tab" aria-selected={tab === 'terminal'} className={tab === 'terminal' ? 'active' : ''} onClick={() => setTab('terminal')}>{t('run.terminal')}</button></div>{tab === 'activity' ? <LiveActivity events={live.events} /> : <div className="terminal-withheld"><strong>{t('run.terminalProtected')}</strong><p>{session?.state === 'completed' || session?.state === 'failed' ? t('run.terminalFinalUnavailable') : t('run.terminalWithheld')}</p></div>}</Panel></div>
     {session?.type === 'competition' && <CompetitionProgress events={live.events} result={result} />}
     <LiveEvaluation events={live.events} evaluation={result?.evaluation} />
     {result?.candidateAvailable && taskId && <a className="button-link standalone-link" href={`/candidates/${encodeURIComponent(taskId)}`}>{t('run.reviewCandidate')} →</a>}
+    <ConfirmDialog open={confirmCancel} title={t('job.cancelTitle')} confirmLabel={t('job.cancel')} tone="danger" busy={actionBusy} onConfirm={cancelJob} onCancel={() => setConfirmCancel(false)}><p>{session?.state === 'queued' ? t('job.cancelQueuedHelp') : t('job.cancelRunningHelp')}</p><p>{t('job.partialWorkHelp')}</p></ConfirmDialog>
   </>;
 }

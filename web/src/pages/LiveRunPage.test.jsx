@@ -114,4 +114,38 @@ describe('Live Run page', () => {
     render(<LiveRunPage api={{}} runId="expired" useStream={useStream({ expired: true, session: null })} />);
     expect(screen.getByText(/ended or expired/u)).toBeInTheDocument();
   });
+
+  it('shows queue position and waits for backend cancellation confirmation', async () => {
+    const api = {
+      cancelJob: vi.fn().mockResolvedValue({ job: { status: 'cancel_requested' } }),
+      retryJob: vi.fn(),
+    };
+    render(<LiveRunPage api={api} runId="run-1" useStream={useStream({
+      events: [runEvent(1, 'job_created', 'queue'), runEvent(2, 'queue_position', 'queue', 'pending', { position: 2, priority: 75 })],
+      session: { id: 'run-1', jobId: 'job-1', type: 'single', state: 'queued', currentStage: 'queue', result: null },
+    })} />);
+    expect(screen.getByText('2')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel Job' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('leave the queue');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cancel Job' }).at(-1));
+    expect(api.cancelJob).toHaveBeenCalledWith('job-1');
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
+  });
+
+  it('retries an interrupted Job as a new run', async () => {
+    const onNavigate = vi.fn();
+    const api = {
+      cancelJob: vi.fn(),
+      retryJob: vi.fn().mockResolvedValue({ runId: 'retry-run' }),
+    };
+    render(<LiveRunPage api={api} runId="run-1" onNavigate={onNavigate} useStream={useStream({
+      events: [],
+      connectionState: 'complete',
+      session: { id: 'run-1', jobId: 'job-1', type: 'single', state: 'interrupted', currentStage: 'failed', result: null },
+    })} />);
+    expect(screen.getByText(/Router stopped while this Job was active/u)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(api.retryJob).toHaveBeenCalledWith('job-1');
+    expect(onNavigate).toHaveBeenCalledWith('/runs/retry-run');
+  });
 });

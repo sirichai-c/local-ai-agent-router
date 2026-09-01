@@ -52,6 +52,33 @@ describe('API client', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).agents).toEqual(['qwen-code', 'opencode']);
   });
 
+  it('submits and manages persistent Jobs without accepting process identifiers', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ job: { id: 'job-1', status: 'queued' }, runId: 'run-1' }, { status: 202 }))
+      .mockResolvedValueOnce(response({ job: { id: 'job-1', priority: 75 } }))
+      .mockResolvedValueOnce(response({ job: { id: 'job-1', status: 'cancel_requested' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiClient.submitJob({
+      type: 'competition',
+      task: 'Improve README',
+      workspace: 'C:\\repo',
+      agents: ['qwen-code', 'opencode'],
+      priority: 50,
+    });
+    await apiClient.updateJobPriority('job-1', 75);
+    await apiClient.cancelJob('job-1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/jobs');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      type: 'competition',
+      task: 'Improve README',
+      workspace: 'C:\\repo',
+      agents: ['qwen-code', 'opencode'],
+      priority: 50,
+    });
+    expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({});
+  });
+
   it('passes candidate fingerprint exactly in approve body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({ status: 'merged' }));
     vi.stubGlobal('fetch', fetchMock);

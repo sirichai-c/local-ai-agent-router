@@ -30,6 +30,7 @@ test('database service creates the SQLite file, schema, indexes, and pragmas', a
 
   assert.deepEqual(tables, [
     'agent_runs',
+    'jobs',
     'schema_migrations',
     'task_categories',
     'tasks',
@@ -38,6 +39,9 @@ test('database service creates the SQLite file, schema, indexes, and pragmas', a
     'idx_agent_runs_agent_created',
     'idx_agent_runs_agent_id',
     'idx_agent_runs_task_id',
+    'idx_jobs_created',
+    'idx_jobs_parent',
+    'idx_jobs_queue',
     'idx_task_categories_category',
     'idx_task_categories_task_id',
   ]);
@@ -100,7 +104,7 @@ test('in-memory databases remain supported for isolated tests', () => {
   database.close();
 });
 
-test('Phase 9 database migrates non-destructively to Phase 10', async (t) => {
+test('Phase 9 database migrates non-destructively through Phase 14', async (t) => {
   const temporaryRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), 'agent-router-phase9-migration-'),
   );
@@ -170,7 +174,7 @@ test('Phase 9 database migrates non-destructively to Phase 10', async (t) => {
     connection.pragma('table_info(agent_runs)').map((column) => column.name),
   );
 
-  assert.equal(connection.pragma('user_version', { simple: true }), 2);
+  assert.equal(connection.pragma('user_version', { simple: true }), 3);
   assert.equal(taskColumns.has('target_branch'), true);
   assert.equal(taskColumns.has('base_commit'), true);
   assert.equal(taskColumns.has('decision'), true);
@@ -178,13 +182,17 @@ test('Phase 9 database migrates non-destructively to Phase 10', async (t) => {
   assert.equal(taskColumns.has('merge_commit'), true);
   assert.equal(runColumns.has('candidate_fingerprint'), true);
   assert.equal(
+    connection.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get().count,
+    1,
+  );
+  assert.equal(
     connection.prepare('SELECT task_text FROM tasks WHERE id = ?')
       .get('old-task').task_text,
     'preserve Phase 9 history',
   );
 });
 
-test('Phase 10 migration can initialize repeatedly without record loss', async (t) => {
+test('Phase 14 migration can initialize repeatedly without record loss', async (t) => {
   const { database } = await createTemporaryDatabase(t);
   const connection = database.getConnection();
   connection.prepare(`
@@ -213,4 +221,48 @@ test('Phase 10 migration can initialize repeatedly without record loss', async (
     `).get().count,
     1,
   );
+  assert.equal(
+    connection.prepare(`
+      SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3
+    `).get().count,
+    1,
+  );
+});
+
+test('Phase 13-style version 2 database migrates to Jobs without losing history', async (t) => {
+  const { database, databasePath } = await createTemporaryDatabase(t, 'agent-router-phase13-migration-');
+  const connection = database.getConnection();
+  connection.prepare(`
+    INSERT INTO tasks (id, task_text, mode, status, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('phase13-task', 'preserve live-era history', 'single', 'completed', '2026-08-31T00:00:00.000Z');
+  connection.exec(`
+    DROP TABLE jobs;
+    DELETE FROM schema_migrations WHERE version = 3;
+    PRAGMA user_version = 2;
+  `);
+  database.close();
+
+  const upgraded = new DatabaseService({ databasePath });
+  try {
+    const upgradedConnection = upgraded.getConnection();
+    upgraded.initializeSchema(upgradedConnection);
+    upgraded.initializeSchema(upgradedConnection);
+    assert.equal(upgradedConnection.pragma('user_version', { simple: true }), 3);
+    assert.equal(
+      upgradedConnection.prepare('SELECT task_text FROM tasks WHERE id = ?')
+        .get('phase13-task').task_text,
+      'preserve live-era history',
+    );
+    assert.equal(
+      upgradedConnection.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get().count,
+      1,
+    );
+    assert.equal(
+      upgradedConnection.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3').get().count,
+      1,
+    );
+  } finally {
+    upgraded.close();
+  }
 });

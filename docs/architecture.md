@@ -413,6 +413,58 @@ Express registers `/health` and all `/api/*` routes before optional frontend sta
 
 Each session has a cryptographically random runtime ID, one of the existing single/competition execution types, a stable stage, a bounded event history, and a safe final summary. Event data excludes task prose, raw stdout/stderr, diff content, fingerprint values, environment data, and stack traces. Project-sandbox events report only the fixed check name, execution state, network policy, result, and duration metadata. Transport disconnect never terminates the underlying Agent.
 
-SSE clients can reconnect with `Last-Event-ID`. The bounded history replays newer events; if the requested range has expired, the server sends a safe current snapshot. Finished sessions expire from memory after the configured TTL, while Phase 9 History remains the persistent record. Runtime sessions are not jobs: Phase 13 has no queue, retry, priority, scheduling, cancellation, persistent recovery, or server-restart recovery.
+SSE clients can reconnect with `Last-Event-ID`. The bounded history replays newer events; if the requested range has expired, the server sends a safe current snapshot. Finished sessions expire from memory after the configured TTL, while Phase 9 History remains the persistent result record. Phase 14 now associates a session with a separate persistent Job without persisting the event log or raw output.
 
 The React `useRunStream` hook owns EventSource lifecycle, snapshot loading, reconnect state, deduplication, and the frontend event cap. The Run Session renders live structured Activity, timeline, evaluation, and sequential competition progress. Raw live terminal output remains withheld because its sensitivity cannot be established safely before evaluation. Candidate review and Human Approval remain the separate Phase 10 fingerprint-bound boundary.
+
+## Persistent Job Manager boundary
+
+```text
+                    Browser
+                       |
+                       v
+                    Job API
+                       |
+                       v
+               Persistent SQLite
+                       |
+                       v
+                 Priority Queue
+                       |
+                       v
+                  Job Scheduler
+                       |
+              global concurrency limit
+                       |
+                       v
+                   Worker Slot
+                       |
+                       v
+                Execution Pipeline
+                       |
+         +-------------+-------------+
+         v             v             v
+       Router        Agent        Evaluator
+                       |             |
+                       +------v------+
+                          Candidate
+
+Job Manager ------------------------------+
+    |                                     |
+    +-- SSE state / queue position -------+
+    +-- Cancel through owned AbortSignal
+    +-- Retry as a new Job
+    +-- Queued-only priority mutation
+```
+
+Task text describes requested work, a Job records one scheduling attempt, a Run Session exposes that Job's live state, and Phase 9 Task History stores the resulting evaluated execution. These IDs remain explicit and are never overloaded. One execution pipeline invocation writes one logical task history record; the Job layer does not duplicate it.
+
+The version-3 idempotent migration adds a metadata-only `jobs` table without dropping or rewriting Phase 9–13 history. It stores task text, validated workspace, type, registry Agent IDs for competition, priority, attempt ancestry, Job/Run/Task identifiers, state timestamps, and safe error metadata. It never stores stdout, stderr, diffs, environment variables, commands, credentials, or secrets. All values use prepared statements.
+
+Queue selection is deterministic: higher numeric priority first, then creation time, then Job ID. Claiming and the `queued -> starting` transition occur in one SQLite immediate transaction. Scheduler wake-ups are event driven after submit, completion, cancellation, retry, priority changes, and startup; concurrent wake-ups cannot claim one Job twice. The scheduler assumes one local Router instance and defaults to `JOB_MAX_CONCURRENT=1`. A competition consumes one top-level slot and keeps its existing sequential internal behavior.
+
+The strict state machine permits only `queued -> starting -> running -> evaluating -> completed`, terminal failure, and explicit cancellation/interruption branches. Retry never mutates a terminal Job; it creates a child attempt with new Job and Run IDs. At startup, queued work remains schedulable while stale active states become `interrupted` with `server_restart`. Automatic resumption is intentionally forbidden because the old process, sandbox, or worktree may be uncertain.
+
+The active registry maps a Job ID only to the backend-created AbortController and its Run ID. Cancellation HTTP input contains no PID, command, container identifier, or path. AbortSignal travels through the existing Agent Executor, Competition Service, execution backend, Safe Process Runner, project evaluator, and Docker wrappers. The Process Runner can terminate only the child it spawned, and sandbox cleanup uses only backend-generated names. Cancellation never approves, commits, merges, pushes, or fabricates a competition winner. Partial worktrees remain diagnostic and non-approvable unless the existing Evaluator and candidate policy completed successfully.
+
+Queued cancellation creates no task history. Active user cancellation and Router-restart interruption do not create zero-quality Agent runs, so they do not distort adaptive routing. Actual Agent failures continue to use the existing performance policy. Queue status and meaningful position changes are emitted as bounded structured events; raw terminal data, diffs, secrets, and stack traces remain excluded.

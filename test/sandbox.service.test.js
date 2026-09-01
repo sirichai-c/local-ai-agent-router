@@ -137,3 +137,19 @@ test('timeout-compatible result still triggers best-effort container removal', a
   assert.equal(result.timedOut, true);
   assert.deepEqual(runner.calls[1].args.slice(0, 2), ['rm', '--force']);
 });
+
+test('sandbox forwards only the scheduler-owned AbortSignal to its container process', async (t) => {
+  const fixture = await createFixture(t);
+  const runner = createRunner();
+  const sandbox = new SandboxService({ runner, runRoot: fixture.runRoot });
+  const controller = new AbortController();
+  await sandbox.run({
+    sandboxId: 'a'.repeat(16),
+    snapshotPath: fixture.snapshotPath,
+    command: 'npm',
+    args: ['test'],
+    signal: controller.signal,
+  });
+  assert.equal(runner.calls[0].signal, controller.signal);
+  assert.equal(runner.calls[1].signal, undefined);
+});

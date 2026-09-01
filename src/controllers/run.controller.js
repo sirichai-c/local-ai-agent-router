@@ -6,8 +6,10 @@ const {
 } = require('../services/competition.service');
 const {
   RunStartError,
-  runCoordinatorService,
 } = require('../services/run-coordinator.service');
+const { JobSchedulerError } = require('../services/job-scheduler.service');
+const { JobServiceError } = require('../services/job.service');
+const { jobManagerService } = require('../services/job-manager.service');
 const { runSessionService } = require('../services/run-session.service');
 
 function validateTaskInput(body) {
@@ -17,7 +19,9 @@ function validateTaskInput(body) {
 }
 
 function sendRunError(response, error) {
-  if (error instanceof RunStartError) {
+  if (error instanceof RunStartError
+    || error instanceof JobSchedulerError
+    || error instanceof JobServiceError) {
     response.status(error.statusCode).json({
       error: error.message,
       code: error.code,
@@ -29,7 +33,7 @@ function sendRunError(response, error) {
 }
 
 function createRunController({
-  coordinator = runCoordinatorService,
+  coordinator = jobManagerService,
   sessions = runSessionService,
   heartbeatMs = config.realtime.heartbeatMs,
 } = {}) {
@@ -43,6 +47,7 @@ function createRunController({
       const session = await coordinator.startSingle({
         task: request.body.task,
         workspace: request.body.workspace,
+        ...(request.body.priority === undefined ? {} : { priority: request.body.priority }),
       });
       response.status(202).json({
         runId: session.id,
@@ -85,6 +90,7 @@ function createRunController({
         task: request.body.task,
         workspace: request.body.workspace,
         agentIds,
+        ...(request.body.priority === undefined ? {} : { priority: request.body.priority }),
       });
       response.status(202).json({
         runId: session.id,

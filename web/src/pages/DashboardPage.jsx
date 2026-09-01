@@ -5,7 +5,7 @@ import { EmptyState, ErrorNotice, LoadingState, Metric, Panel, StatusBadge } fro
 import { useI18n } from '../i18n/I18nContext';
 import { formatDate, formatScore } from '../utils/format';
 
-const EMPTY_FORM = { task: '', workspace: '', mode: 'auto', agents: [], analyzeFirst: true };
+const EMPTY_FORM = { task: '', workspace: '', mode: 'auto', agents: [], analyzeFirst: true, priority: 50 };
 export function DashboardPage({ api, onNavigate }) {
   const { t } = useI18n(); const [form, setForm] = useState(EMPTY_FORM); const [analysisBusy, setAnalysisBusy] = useState(false); const [analysis, setAnalysis] = useState(null); const [validation, setValidation] = useState('');
   const [state, setState] = useState({ loading: true, error: null, health: null, ollama: null, models: null, agents: [], tasks: [], performance: [] });

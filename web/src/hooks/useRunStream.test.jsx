@@ -56,4 +56,29 @@ describe('useRunStream', () => {
     await waitFor(() => expect(result.current.expired).toBe(true));
     expect(subscribe).not.toHaveBeenCalled();
   });
+
+  it('tracks queued positions and closes on backend-confirmed cancellation', async () => {
+    const cancelled = { ...running, jobId: 'job-1', state: 'cancelled', currentStage: 'queue' };
+    const api = {
+      getRun: vi.fn()
+        .mockResolvedValueOnce({ ...running, jobId: 'job-1', state: 'queued', currentStage: 'queue' })
+        .mockResolvedValueOnce(cancelled),
+    };
+    const controls = {};
+    const close = vi.fn();
+    const subscribe = vi.fn((_runId, handlers) => {
+      Object.assign(controls, handlers);
+      return { close };
+    });
+    const { result } = renderHook(() => useRunStream('run-1', { api, subscribe }));
+    await waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+    act(() => controls.onEvent({ id: 1, type: 'queue_position', stage: 'queue', status: 'pending', messageKey: 'run.queuePosition', data: { position: 2 } }));
+    expect(result.current.events[0].data.position).toBe(2);
+    act(() => controls.onEvent({ id: 2, type: 'job_cancel_requested', stage: 'queue', status: 'warning', messageKey: 'run.jobCancelRequested', data: {} }));
+    expect(result.current.session.state).toBe('cancel_requested');
+    act(() => controls.onEvent({ id: 3, type: 'job_cancelled', stage: 'queue', status: 'cancelled', messageKey: 'run.jobCancelled', data: {} }));
+    await waitFor(() => expect(result.current.session.state).toBe('cancelled'));
+    expect(result.current.connectionState).toBe('complete');
+    expect(close).toHaveBeenCalled();
+  });
 });

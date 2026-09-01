@@ -23,6 +23,10 @@ const {
 const {
   AgentExecutionBackendService,
 } = require('./agent-execution-backend.service');
+const {
+  isCancellationError,
+  throwIfAborted,
+} = require('./cancellation.service');
 
 const APPROVAL_ELIGIBLE_STATUSES = new Set([
   'completed',
@@ -220,7 +224,8 @@ class AgentExecutorService {
     return this.persistSingleResult({ taskId, agent, result: failedResult });
   }
 
-  async executeTask({ task, workspace, onEvent }) {
+  async executeTask({ task, workspace, onEvent, signal }) {
+    throwIfAborted(signal);
     if (this.isExecutionEnabled()) {
       await this.assertExecutionBackendAvailable();
     }
@@ -233,6 +238,7 @@ class AgentExecutorService {
       data: {},
     });
     const analysis = await this.router.analyzeTask(task);
+    throwIfAborted(signal);
     reportExecutionEvent(onEvent, {
       type: 'router_completed',
       stage: 'routing',
@@ -273,6 +279,7 @@ class AgentExecutorService {
       data: {},
     });
     const repository = await this.validateRepository(workspace);
+    throwIfAborted(signal);
     reportExecutionEvent(onEvent, {
       type: 'repository_validated',
       stage: 'repository',
@@ -300,6 +307,7 @@ class AgentExecutorService {
         taskId,
         classification: analysis.classification,
         onEvent,
+        signal,
       });
       const history = await this.persistSingleResult({
         taskId,
@@ -309,6 +317,14 @@ class AgentExecutorService {
 
       return { ...result, history };
     } catch (error) {
+      if (isCancellationError(error, signal)) {
+        try {
+          error.history = await this.history.completeTask(taskId, 'cancelled');
+        } catch {
+          error.history = null;
+        }
+        throw error;
+      }
       error.history = await this.persistSingleFailure({
         taskId,
         agent: analysis.selectedAgent,
@@ -325,7 +341,9 @@ class AgentExecutorService {
     taskId,
     classification = {},
     onEvent,
+    signal,
   }) {
+    throwIfAborted(signal);
     if (!this.isExecutionEnabled()) {
       return {
         status: 'execution_disabled',
@@ -350,6 +368,7 @@ class AgentExecutorService {
     }
 
     await this.assertExecutionBackendAvailable(agent.id);
+    throwIfAborted(signal);
 
     reportExecutionEvent(onEvent, {
       type: 'worktree_creating',
@@ -364,6 +383,7 @@ class AgentExecutorService {
       baseCommit: repository.baseCommit,
       taskId,
     });
+    throwIfAborted(signal);
     reportExecutionEvent(onEvent, {
       type: 'worktree_created',
       stage: 'worktree',
@@ -388,6 +408,7 @@ class AgentExecutorService {
       const invocation = typeof adapter.prepareExecution === 'function'
         ? await adapter.prepareExecution(invocationPlan)
         : invocationPlan;
+      throwIfAborted(signal);
       reportExecutionEvent(onEvent, {
         type: 'agent_starting',
         stage: 'agent',
@@ -408,7 +429,9 @@ class AgentExecutorService {
         agent,
         worktree,
         ollamaBaseUrl: this.ollamaBaseUrl,
+        signal,
       });
+      throwIfAborted(signal);
       const finishedAt = this.clock();
       const processSucceeded = processResult.exitCode === 0
         && !processResult.timedOut;
@@ -448,7 +471,9 @@ class AgentExecutorService {
         untrackedFiles,
         unexpectedCommit: autoCommitDetected,
         onEvent,
+        signal,
       });
+      throwIfAborted(signal);
       reportExecutionEvent(onEvent, {
         type: 'evaluation_completed',
         stage: 'evaluation',
@@ -536,7 +561,7 @@ class AgentExecutorService {
         evaluation,
       };
     } catch (error) {
-      if (!agentTerminalEventEmitted) {
+      if (!agentTerminalEventEmitted && !isCancellationError(error, signal)) {
         reportExecutionEvent(onEvent, {
           type: 'agent_failed',
           stage: 'agent',

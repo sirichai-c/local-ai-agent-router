@@ -3,6 +3,7 @@ const { projectEvaluator } = require('../evaluators/project.evaluator');
 const { scoreEvaluator } = require('../evaluators/score.evaluator');
 const { staticEvaluator } = require('../evaluators/static.evaluator');
 const { gitService } = require('./git.service');
+const { throwIfAborted } = require('./cancellation.service');
 
 function reportEvaluationEvent(onEvent, event) {
   if (typeof onEvent !== 'function') return;
@@ -33,10 +34,12 @@ class EvaluatorService {
     untrackedFiles,
     unexpectedCommit = false,
     onEvent,
+    signal,
   }) {
     if (typeof workspace !== 'string' || workspace.trim() === '') {
       throw new TypeError('workspace must be a non-empty string');
     }
+    throwIfAborted(signal);
 
     const resolvedUntrackedFiles = untrackedFiles
       ?? await this.untrackedFileProvider(workspace);
@@ -46,10 +49,12 @@ class EvaluatorService {
       trackedDiff,
       untrackedFiles: resolvedUntrackedFiles,
     });
+    throwIfAborted(signal);
     const staticCheckResults = await this.staticChecks.evaluate({
       workspace,
       changedFiles: diffResult.files,
     });
+    throwIfAborted(signal);
     for (const check of staticCheckResults) {
       if (!check.applicable) continue;
       reportEvaluationEvent(onEvent, {
@@ -64,7 +69,8 @@ class EvaluatorService {
         },
       });
     }
-    const projectResult = await this.project.evaluate({ workspace, onEvent });
+    const projectResult = await this.project.evaluate({ workspace, onEvent, signal });
+    throwIfAborted(signal);
     const scoreResult = this.scorer.evaluate({
       execution,
       diff: diffResult,

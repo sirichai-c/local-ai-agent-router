@@ -138,3 +138,12 @@ test('real-time configuration keeps event history, TTL, and heartbeat bounded', 
     /between 50 and 1000/,
   );
 });
+
+test('Job scheduler defaults to one bounded top-level execution slot', () => {
+  assert.equal(config.jobs.maxConcurrent, 1);
+  assert.equal(parseIntegerInRange('2', 1, 'JOB_MAX_CONCURRENT', 1, 16), 2);
+  assert.throws(
+    () => parseIntegerInRange('0', 1, 'JOB_MAX_CONCURRENT', 1, 16),
+    /positive integer|between 1 and 16/,
+  );
+});
